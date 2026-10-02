@@ -3,8 +3,10 @@ package workout.app.ui
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -62,6 +64,8 @@ data class ProfileForm(
     val limits: Set<LimitTag> = emptySet(),
     val apiKey: String = "",
 )
+
+internal const val UndoWindowMillis = 5_000L
 
 data class PendingRemoval(
     val name: String,
@@ -123,6 +127,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     var todayPlanOpen by mutableStateOf(false)
         private set
     var pendingRemoval by mutableStateOf<PendingRemoval?>(null)
+        private set
+    var undoUntil by mutableLongStateOf(0L)
         private set
 
     init {
@@ -369,10 +375,13 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
             index = index,
             sets = sets.getOrNull(index).orEmpty(),
         )
+        val until = SystemClock.elapsedRealtime() + UndoWindowMillis
+        undoUntil = until
         undoJob?.cancel()
         undoJob = viewModelScope.launch {
-            delay(5_000)
-            pendingRemoval = null
+            val wait = until - SystemClock.elapsedRealtime()
+            if (wait > 0) delay(wait)
+            if (undoUntil == until) pendingRemoval = null
         }
         changeToday { repository.removeFromToday(exerciseId) }
     }

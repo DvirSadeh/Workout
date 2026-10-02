@@ -4,7 +4,13 @@ import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.os.SystemClock
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.Spring
@@ -32,6 +38,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -49,18 +56,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -107,6 +118,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import workout.app.R
@@ -184,7 +196,10 @@ private fun HomeScreen(model: WorkoutViewModel) {
     val dateText = remember(today) {
         today.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.ENGLISH))
     }
-    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { RemovalUndoHost(model) },
+    ) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
@@ -306,9 +321,6 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                             if (model.todayPlanOpen) R.string.close_adjustments else R.string.adjust_today_plan,
                         ),
                     )
-                }
-                model.pendingRemoval?.let { pending ->
-                    RemovalUndo(pending.name, model::undoRemoval)
                 }
                 if (model.todayPlanOpen) {
                     if (session.completed) {
@@ -754,10 +766,14 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
                     if (index != placeables.lastIndex) cursor += gap
                 }
                 val height = if (placeables.isEmpty()) 0 else cursor
+                // Read during measure so releasing the finger always relayouts onto these slots.
+                val draggingNow = draggedId != null
+                val sliding = animatedYs
                 layout(constraints.maxWidth, height) {
                     placeables.forEachIndexed { index, placeable ->
                         val id = displayIds.getOrNull(index)
-                        val y = id?.let { animatedYs[it] } ?: measuredTops[index]
+                        val settled = measuredTops[index]
+                        val y = if (draggingNow && id != null) sliding[id] ?: settled else settled
                         placeable.place(0, y)
                     }
                 }
@@ -826,9 +842,13 @@ private fun rememberAnimatedTops(
                     val existing = anims[id]
                     if (existing == null) {
                         anims[id] = Animatable(target)
-                    } else if (existing.targetValue != target) {
+                    } else {
                         launch {
-                            if (dragging) existing.animateTo(target, rowSpring) else existing.snapTo(target)
+                            if (dragging && existing.value != target) {
+                                existing.animateTo(target, rowSpring)
+                            } else {
+                                existing.snapTo(target)
+                            }
                         }
                     }
                 }
@@ -1018,30 +1038,77 @@ private fun AddExerciseTile(
 }
 
 @Composable
-private fun RemovalUndo(name: String, onUndo: () -> Unit) {
-    Surface(
+private fun RemovalUndoHost(model: WorkoutViewModel) {
+    val pending = model.pendingRemoval
+    var retained by remember { mutableStateOf<PendingRemoval?>(null) }
+    SideEffect {
+        if (pending != null) retained = pending
+    }
+    val item = pending ?: retained
+    AnimatedVisibility(
+        visible = pending != null,
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        enter = slideInVertically { it } + fadeIn(),
+        exit = slideOutVertically { it } + fadeOut(),
     ) {
-        Row(
-            Modifier.padding(start = 16.dp, end = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                stringResource(R.string.removed_exercise, name),
-                modifier = Modifier.weight(1f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            TextButton(onClick = onUndo) {
-                Text(
-                    stringResource(R.string.undo),
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
-                )
+        if (item != null) {
+            val until = model.undoUntil
+            var fraction by remember(until) { mutableFloatStateOf(1f) }
+            LaunchedEffect(until) {
+                while (isActive) {
+                    val left = until - SystemClock.elapsedRealtime()
+                    fraction = (left.toFloat() / UndoWindowMillis).coerceIn(0f, 1f)
+                    if (left <= 0L) break
+                    withFrameNanos { }
+                }
             }
+            RemovalUndo(item.name, fraction, model::undoRemoval)
+        }
+    }
+}
+
+@Composable
+private fun RemovalUndo(name: String, fraction: Float, onUndo: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .navigationBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .fillMaxWidth(),
+        shape = SnackbarDefaults.shape,
+        color = SnackbarDefaults.color,
+        contentColor = SnackbarDefaults.contentColor,
+        shadowElevation = 6.dp,
+    ) {
+        Column {
+            Row(
+                Modifier.padding(start = 16.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.removed_exercise, name),
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                TextButton(onClick = onUndo) {
+                    Text(
+                        stringResource(R.string.undo),
+                        color = SnackbarDefaults.actionColor,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+            LinearProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp),
+                color = SnackbarDefaults.actionColor,
+                trackColor = SnackbarDefaults.color,
+                gapSize = 0.dp,
+                drawStopIndicator = {},
+            )
         }
     }
 }
