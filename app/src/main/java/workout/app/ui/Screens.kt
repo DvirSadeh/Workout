@@ -985,7 +985,7 @@ private fun ExerciseRow(
             BodyDiagram(
                 muscles = muscles,
                 female = female,
-                modifier = Modifier.size(width = 52.dp, height = 80.dp),
+                modifier = Modifier.size(width = 72.dp, height = 84.dp),
                 contentDescription = muscleNote,
             )
         }
@@ -1176,7 +1176,7 @@ private fun AddExerciseDialog(
                             BodyDiagram(
                                 muscles = listOf(muscle),
                                 female = female,
-                                modifier = Modifier.size(width = 40.dp, height = 64.dp),
+                                modifier = Modifier.size(width = 56.dp, height = 64.dp),
                                 contentDescription = label,
                             )
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1217,7 +1217,7 @@ private fun AddExerciseDialog(
                             BodyDiagram(
                                 muscles = exercise.primaryMuscles,
                                 female = female,
-                                modifier = Modifier.size(width = 40.dp, height = 64.dp),
+                                modifier = Modifier.size(width = 56.dp, height = 64.dp),
                                 contentDescription = if (muscles.isBlank()) {
                                     null
                                 } else {

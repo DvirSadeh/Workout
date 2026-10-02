@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -25,6 +26,7 @@ import org.json.JSONObject
 
 private val posteriorMuscles = setOf("middle back", "lower back", "glutes", "hamstrings", "triceps")
 private val anteriorMuscles = setOf("chest", "biceps", "abdominals", "quadriceps")
+private val lowerMuscles = setOf("glutes", "quadriceps", "hamstrings", "calves")
 
 private val groupsFor = mapOf(
     "chest" to setOf("CHEST"),
@@ -55,6 +57,7 @@ fun BodyDiagram(
 ) {
     val names = muscles.map { it.lowercase() }.toSet()
     val back = names.any { it in posteriorMuscles } && names.none { it in anteriorMuscles }
+    val region = regionFor(names)
     val activeGroups = names.flatMap { groupsFor[it].orEmpty() }.toSet()
     val context = LocalContext.current
     val figure = remember(female, back) { MuscleFigures.load(context, female, back) }
@@ -69,20 +72,34 @@ fun BodyDiagram(
         ),
     ) {
         if (figure.muscles.isNotEmpty()) {
-            val fitted = min(size.width / figure.width, size.height / figure.height)
-            val dx = (size.width - figure.width * fitted) / 2f
-            val dy = (size.height - figure.height * fitted) / 2f
+            val frame = figure.frame(region)
+            val fitted = min(size.width / frame.width, size.height / frame.height)
+            val dx = (size.width - frame.width * fitted) / 2f - frame.x * fitted
+            val dy = (size.height - frame.height * fitted) / 2f - frame.y * fitted
             translate(dx, dy) {
                 scale(fitted, fitted, pivot = Offset.Zero) {
-                    val body = Brush.verticalGradient(listOf(bodyTop, bodyBottom), startY = 0f, endY = figure.height)
-                    figure.outline.forEach { part -> drawPart(part, body, figure.centerX, separate = false) }
-                    val dim = figure.muscles.filter { it.group !in activeGroups }
-                    val lit = figure.muscles.filter { it.group in activeGroups }
-                    dim.forEach { part -> drawShaded(part, idleTop, idleBottom, figure.centerX) }
-                    lit.forEach { part -> drawShaded(part, lerp(active, Color.White, 0.18f), active, figure.centerX) }
+                    clipRect(frame.x, frame.y, frame.x + frame.width, frame.y + frame.height) {
+                        val body = Brush.verticalGradient(listOf(bodyTop, bodyBottom), startY = 0f, endY = figure.height)
+                        figure.outline.forEach { part -> drawPart(part, body, figure.centerX, separate = false) }
+                        val dim = figure.muscles.filter { it.group !in activeGroups }
+                        val lit = figure.muscles.filter { it.group in activeGroups }
+                        dim.forEach { part -> drawShaded(part, idleTop, idleBottom, figure.centerX) }
+                        lit.forEach { part -> drawShaded(part, lerp(active, Color.White, 0.18f), active, figure.centerX) }
+                    }
                 }
             }
         }
+    }
+}
+
+private fun regionFor(names: Set<String>): BodyRegion {
+    if (names.isEmpty()) return BodyRegion.FULL
+    val lower = names.any { it in lowerMuscles }
+    val upper = names.any { it !in lowerMuscles }
+    return when {
+        lower && upper -> BodyRegion.FULL
+        lower -> BodyRegion.LOWER
+        else -> BodyRegion.UPPER
     }
 }
 
@@ -131,10 +148,14 @@ private object MuscleFigures {
         val json = JSONObject(text)
         val outline = json.getJSONArray("outline")
         val muscles = json.getJSONArray("muscles")
+        val key = name.removePrefix("musclemap/").removeSuffix(".json")
+        val windows = cropWindows.getValue(key)
         return MuscleFigure(
             width = json.getDouble("w").toFloat(),
             height = json.getDouble("h").toFloat(),
             centerX = json.getDouble("cx").toFloat(),
+            upper = windows.first,
+            lower = windows.second,
             outline = List(outline.length()) { index -> part(outline.getJSONObject(index), "") },
             muscles = List(muscles.length()) { index ->
                 val item = muscles.getJSONObject(index)
@@ -149,12 +170,31 @@ private object MuscleFigures {
     }
 }
 
+private enum class BodyRegion { FULL, UPPER, LOWER }
+
+private class Frame(val x: Float, val y: Float, val width: Float, val height: Float)
+
+private val cropWindows = mapOf(
+    "male-front" to (Frame(170f, 39f, 680f, 729f) to Frame(170f, 633f, 680f, 817f)),
+    "male-back" to (Frame(180f, 34f, 663f, 750f) to Frame(180f, 612f, 663f, 862f)),
+    "female-front" to (Frame(216f, 14f, 587f, 723f) to Frame(216f, 607f, 587f, 844f)),
+    "female-back" to (Frame(192f, 9f, 631f, 813f) to Frame(192f, 639f, 631f, 913f)),
+)
+
 private class MuscleFigure(
     val width: Float,
     val height: Float,
     val centerX: Float,
+    val upper: Frame,
+    val lower: Frame,
     val outline: List<MusclePart>,
     val muscles: List<MusclePart>,
-)
+) {
+    fun frame(region: BodyRegion): Frame = when (region) {
+        BodyRegion.FULL -> Frame(0f, 0f, width, height)
+        BodyRegion.UPPER -> upper
+        BodyRegion.LOWER -> lower
+    }
+}
 
 private class MusclePart(val group: String, val side: String, val path: Path)
