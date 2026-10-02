@@ -249,61 +249,6 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                     }
                     if (session.headline.isNotBlank()) SessionNote(session.headline)
                 }
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    plan.exercises.withIndex().chunked(2).forEach { pair ->
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            pair.forEach { (index, planned) ->
-                                val exercise = model.catalog.find(planned.exerciseId)
-                                val finished = model.sets.getOrNull(index).orEmpty().let { row ->
-                                    row.isNotEmpty() && row.all { it.done }
-                                }
-                                SessionTile(
-                                    name = exercise?.name ?: planned.exerciseId,
-                                    detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
-                                        loadSuffix(planned.loadKg, exercise?.loadType),
-                                    finished = finished,
-                                    onClick = { model.openExercise(planned.exerciseId) },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                            if (pair.size == 1) Spacer(Modifier.weight(1f))
-                        }
-                    }
-                }
-                if (session.completed) {
-                    val rating = session.rating?.let { ratingLabel(it) } ?: ""
-                    Text(
-                        stringResource(R.string.done_today, rating),
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                } else if (started && totalSets > 0) {
-                    val nextIndex = model.sets.indexOfFirst { row -> row.any { !it.done } }
-                    val nextName = plan.exercises.getOrNull(nextIndex)?.let { planned ->
-                        model.catalog.find(planned.exerciseId)?.name
-                    }
-                    Text(stringResource(R.string.sets_progress, doneSets, totalSets))
-                    LinearProgressIndicator(
-                        progress = { doneSets.toFloat() / totalSets.toFloat() },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(8.dp)
-                            .clip(RoundedCornerShape(99.dp)),
-                        color = MaterialTheme.colorScheme.primary,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        gapSize = 0.dp,
-                        drawStopIndicator = {},
-                    )
-                    if (nextName != null) {
-                        Text(
-                            stringResource(R.string.next_exercise, nextName),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    }
-                }
                 Button(
                     onClick = model::openPlayer,
                     modifier = Modifier
@@ -312,6 +257,74 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                     shape = RoundedCornerShape(16.dp),
                 ) {
                     Text(stringResource(action), style = MaterialTheme.typography.titleMedium)
+                }
+                OutlinedButton(
+                    onClick = model::toggleTodayPlan,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Text(
+                        stringResource(
+                            if (model.todayPlanOpen) R.string.hide_today_plan else R.string.show_today_plan,
+                        ),
+                    )
+                }
+                if (model.todayPlanOpen) {
+                    if (session.completed) {
+                        val rating = session.rating?.let { ratingLabel(it) } ?: ""
+                        Text(
+                            stringResource(R.string.done_today, rating),
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                    } else if (started && totalSets > 0) {
+                        val nextIndex = model.sets.indexOfFirst { row -> row.any { !it.done } }
+                        val nextName = plan.exercises.getOrNull(nextIndex)?.let { planned ->
+                            model.catalog.find(planned.exerciseId)?.name
+                        }
+                        Text(stringResource(R.string.sets_progress, doneSets, totalSets))
+                        LinearProgressIndicator(
+                            progress = { doneSets.toFloat() / totalSets.toFloat() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(99.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                            gapSize = 0.dp,
+                            drawStopIndicator = {},
+                        )
+                        if (nextName != null) {
+                            Text(
+                                stringResource(R.string.next_exercise, nextName),
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        plan.exercises.withIndex().chunked(2).forEach { pair ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                pair.forEach { (index, planned) ->
+                                    val exercise = model.catalog.find(planned.exerciseId)
+                                    val finished = model.sets.getOrNull(index).orEmpty().let { row ->
+                                        row.isNotEmpty() && row.all { it.done }
+                                    }
+                                    SessionTile(
+                                        name = exercise?.name ?: planned.exerciseId,
+                                        detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
+                                            loadSuffix(planned.loadKg, exercise?.loadType),
+                                        finished = finished,
+                                        onClick = { model.openExercise(planned.exerciseId) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
                 }
                 if (session.completed || started) {
                     OutlinedButton(

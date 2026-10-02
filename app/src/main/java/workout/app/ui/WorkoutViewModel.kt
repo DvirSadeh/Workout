@@ -111,6 +111,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var importReady by mutableStateOf(false)
         private set
+    var todayPlanOpen by mutableStateOf(false)
+        private set
 
     init {
         viewModelScope.launch {
@@ -335,6 +337,10 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 adjusting = false
             }
         }
+    }
+
+    fun toggleTodayPlan() {
+        todayPlanOpen = !todayPlanOpen
     }
 
     fun resetToday() {

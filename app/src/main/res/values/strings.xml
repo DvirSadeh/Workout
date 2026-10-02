@@ -136,4 +136,6 @@
     <string name="skipping_limits">Skipping %1$s</string>
     <string name="session_note">About this workout</string>
     <string name="reset_today">Reset today</string>
+    <string name="show_today_plan">Show today\'s plan</string>
+    <string name="hide_today_plan">Hide today\'s plan</string>
 </resources>
