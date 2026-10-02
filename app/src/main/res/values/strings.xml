@@ -136,6 +136,12 @@
     <string name="skipping_limits">Skipping %1$s</string>
     <string name="session_note">About this workout</string>
     <string name="reset_today">Reset today</string>
-    <string name="show_today_plan">Show today\'s plan</string>
-    <string name="hide_today_plan">Hide today\'s plan</string>
+    <string name="adjust_today_plan">Adjust today\'s plan</string>
+    <string name="close_adjustments">Close</string>
+    <string name="shorter">Shorter</string>
+    <string name="longer">Longer</string>
+    <string name="adjust_length_help">Shorter removes the last exercise. Longer adds one. This changes today only.</string>
+    <string name="tap_exercise_hardness">Tap an exercise to make it easier or harder.</string>
+    <string name="adjust_hardness">Adjust hardness</string>
+    <string name="hardness_help">Easier and harder versions are the same movement. Use one and it replaces today\'s exercise.</string>
 </resources>

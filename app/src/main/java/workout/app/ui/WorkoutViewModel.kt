@@ -303,6 +303,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     if (slot >= 0) exerciseIndex = slot
                     setsDirty = false
                     repository.replaceSets(result.plan, realigned)
+                    if (screen is Screen.Exercise) openExercise(exerciseId)
                 }
                 scheduleBackup()
             } finally {
@@ -341,6 +342,29 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleTodayPlan() {
         todayPlanOpen = !todayPlanOpen
+    }
+
+    fun resizeToday(delta: Int) {
+        if (adjusting) return
+        val session = today ?: return
+        adjusting = true
+        viewModelScope.launch {
+            try {
+                gate.withLock {
+                    val resized = repository.resizeToday(delta) ?: return@withLock
+                    if (resized.exercises == session.plan.exercises) return@withLock
+                    val realigned = realign(sets, session.plan, resized)
+                    today = session.copy(plan = resized)
+                    sets = realigned
+                    exerciseIndex = exerciseIndex.coerceIn(0, resized.exercises.lastIndex.coerceAtLeast(0))
+                    setsDirty = false
+                    repository.replaceSets(resized, realigned)
+                }
+                scheduleBackup()
+            } finally {
+                adjusting = false
+            }
+        }
     }
 
     fun resetToday() {

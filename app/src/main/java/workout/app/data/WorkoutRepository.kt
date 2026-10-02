@@ -181,6 +181,17 @@ class WorkoutRepository(
         dao.saveSession(entity.copy(rating = rating.name, completed = true))
     }
 
+    suspend fun resizeToday(delta: Int): SessionPlan? = withContext(Dispatchers.IO) {
+        val profile = dao.profile()?.toProfile() ?: return@withContext null
+        val today = LocalDate.now()
+        val entity = dao.session(today.toString()) ?: return@withContext null
+        val plan = parsePlan(entity.planJson)
+        val resized = Planner.resizeSession(plan, profile, catalog, historyRecords(today), delta)
+        if (resized.exercises == plan.exercises) return@withContext plan
+        dao.saveSession(entity.copy(planJson = resized.toJson()))
+        resized
+    }
+
     suspend fun resetToday() = withContext(Dispatchers.IO) {
         val today = LocalDate.now().toString()
         val entity = dao.session(today) ?: return@withContext

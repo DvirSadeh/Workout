@@ -85,7 +85,9 @@ import workout.domain.LimitTag
 import workout.domain.LoadType
 import workout.domain.SessionRating
 import workout.domain.Sex
+import workout.domain.ProgrammedExercise
 import workout.domain.UserProfile
+import workout.domain.WorkoutSize
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -241,7 +243,7 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                         Text(
                             stringResource(
                                 R.string.session_meta,
-                                model.profile?.minutesPerSession ?: 0,
+                                sessionMinutes(plan.exercises.size),
                                 plan.exercises.size,
                             ),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -265,11 +267,40 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                 ) {
                     Text(
                         stringResource(
-                            if (model.todayPlanOpen) R.string.hide_today_plan else R.string.show_today_plan,
+                            if (model.todayPlanOpen) R.string.close_adjustments else R.string.adjust_today_plan,
                         ),
                     )
                 }
                 if (model.todayPlanOpen) {
+                    val length = WorkoutSize.range(plan.focus)
+                    Text(
+                        stringResource(R.string.adjust_length_help),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = { model.resizeToday(-1) },
+                            enabled = plan.exercises.size > length.first,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                        ) {
+                            Text(stringResource(R.string.shorter))
+                        }
+                        OutlinedButton(
+                            onClick = { model.resizeToday(1) },
+                            enabled = plan.exercises.size < length.last,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp),
+                        ) {
+                            Text(stringResource(R.string.longer))
+                        }
+                    }
+                    Text(
+                        stringResource(R.string.tap_exercise_hardness),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     if (session.completed) {
                         val rating = session.rating?.let { ratingLabel(it) } ?: ""
                         Text(
@@ -842,28 +873,7 @@ private fun ExerciseScreen(model: WorkoutViewModel, id: String) {
     val exercise = model.catalog.find(id)
     ScreenFrame(title = exercise?.name ?: id, onBack = model::back) {
         if (exercise == null) return@ScreenFrame
-        val session = model.today
-        val inToday = session?.plan?.exercises?.any { it.exerciseId == exercise.id } == true
-        val sameFamily = session?.plan?.exercises?.any { planned ->
-            model.catalog.find(planned.exerciseId)?.familyId == exercise.familyId
-        } == true
-        val allowed = model.profile?.let { profile ->
-            model.catalog.eligible(profile).any { it.id == exercise.id }
-        } == true
-        if (session != null && sameFamily && !inToday && allowed) {
-            Button(
-                onClick = { model.useThisToday(exercise.id) },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(stringResource(R.string.use_this_today))
-            }
-        } else if (inToday) {
-            Text(
-                stringResource(R.string.todays_version),
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.titleMedium,
-            )
-        }
+        HardnessChooser(model, exercise)
         ExercisePhotos(exercise.imageFiles)
         if (exercise.primaryMuscles.isNotEmpty()) {
             Text(exercise.primaryMuscles.joinToString(", "))
@@ -872,22 +882,84 @@ private fun ExerciseScreen(model: WorkoutViewModel, id: String) {
         exercise.instructions.forEachIndexed { index, step ->
             Text("${index + 1}. $step")
         }
-        val family = model.catalog.inFamily(exercise.familyId)
-        val easier = family.filter { it.tier < exercise.tier }
-        val harder = family.filter { it.tier > exercise.tier }
-        if (easier.isNotEmpty()) {
-            Text(stringResource(R.string.easier_versions), style = MaterialTheme.typography.titleMedium)
-            easier.forEach { other ->
-                TextButton(onClick = { model.openExercise(other.id) }) { Text(other.name) }
+    }
+}
+
+@Composable
+private fun HardnessChooser(model: WorkoutViewModel, exercise: ProgrammedExercise) {
+    val session = model.today ?: return
+    val todayId = session.plan.exercises.firstOrNull { planned ->
+        model.catalog.find(planned.exerciseId)?.familyId == exercise.familyId
+    }?.exerciseId ?: return
+    val todayExercise = model.catalog.find(todayId) ?: return
+    val eligible = model.profile?.let { profile -> model.catalog.eligible(profile).map { it.id }.toSet() }
+    fun allowed(id: String) = id == todayExercise.id || eligible == null || id in eligible
+    val family = model.catalog.inFamily(exercise.familyId)
+    val easier = family.filter { it.tier < todayExercise.tier && allowed(it.id) }
+    val harder = family.filter { it.tier > todayExercise.tier && allowed(it.id) }
+    if (easier.isEmpty() && harder.isEmpty()) return
+    Text(stringResource(R.string.adjust_hardness), style = MaterialTheme.typography.titleMedium)
+    Text(
+        stringResource(R.string.hardness_help),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall,
+    )
+    if (easier.isNotEmpty()) {
+        Text(stringResource(R.string.easier_versions), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        easier.forEach { VersionChoice(model, it, today = false) }
+    }
+    VersionChoice(model, todayExercise, today = true)
+    if (harder.isNotEmpty()) {
+        Text(stringResource(R.string.harder_versions), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        harder.forEach { VersionChoice(model, it, today = false) }
+    }
+}
+
+@Composable
+private fun VersionChoice(model: WorkoutViewModel, exercise: ProgrammedExercise, today: Boolean) {
+    val viewing = (model.screen as? Screen.Exercise)?.id == exercise.id
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = if (today) {
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant
+        },
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (today) {
+                Text(
+                    stringResource(R.string.todays_version),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
+                )
             }
-        }
-        if (harder.isNotEmpty()) {
-            Text(stringResource(R.string.harder_versions), style = MaterialTheme.typography.titleMedium)
-            harder.forEach { other ->
-                TextButton(onClick = { model.openExercise(other.id) }) { Text(other.name) }
+            Text(exercise.name, style = MaterialTheme.typography.titleMedium)
+            if (!today) {
+                Button(
+                    onClick = { model.useThisToday(exercise.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Text(stringResource(R.string.use_this_today))
+                }
+            }
+            if (!viewing) {
+                TextButton(onClick = { model.openExercise(exercise.id) }) {
+                    Text(stringResource(R.string.how_to))
+                }
             }
         }
     }
+}
+
+private fun sessionMinutes(count: Int): Int = when {
+    count <= 3 -> 15
+    count == 4 -> 20
+    count == 5 -> 30
+    count == 6 -> 45
+    else -> 60
 }
 
 @Composable

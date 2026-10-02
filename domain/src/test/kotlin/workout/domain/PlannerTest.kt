@@ -321,6 +321,24 @@ class PlannerTest {
     }
 
     @Test
+    fun shorterDropsTheLastExerciseAndLongerAddsOne() {
+        val profile = profile(minutes = 20)
+        val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        assertEquals(4, plan.exercises.size)
+        val short = Planner.resizeSession(plan, profile, catalog, emptyList(), -1)
+        assertEquals(plan.exercises.take(3), short.exercises)
+        assertEquals(short, Planner.resizeSession(short, profile, catalog, emptyList(), -1))
+        val long = Planner.resizeSession(plan, profile, catalog, emptyList(), 1)
+        assertEquals(plan.exercises, long.exercises.take(4))
+        assertEquals(MovementPattern.CORE, catalog.require(long.exercises.last().exerciseId).pattern)
+        assertEquals(plan.exercises.first().sets, long.exercises.last().sets)
+        var grown = plan
+        repeat(6) { grown = Planner.resizeSession(grown, profile, catalog, emptyList(), 1) }
+        assertEquals(7, grown.exercises.size)
+        assertEquals(grown, Planner.resizeSession(grown, profile, catalog, emptyList(), 1))
+    }
+
+    @Test
     fun harderLeavesTheRestOfTheSessionAlone() {
         val profile = profile(minutes = 60)
         val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)

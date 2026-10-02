@@ -18,6 +18,14 @@ object Planner {
         today: LocalDate,
     ): SessionPlan = Fallback.plan(profile, catalog, history, today)
 
+    fun resizeSession(
+        plan: SessionPlan,
+        profile: UserProfile,
+        catalog: Catalog,
+        history: List<SessionRecord>,
+        delta: Int,
+    ): SessionPlan = WorkoutSize.resize(plan, profile, catalog, history, delta)
+
     fun adoptVersion(
         plan: SessionPlan,
         catalog: Catalog,
