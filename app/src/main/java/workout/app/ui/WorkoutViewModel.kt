@@ -344,21 +344,33 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         todayPlanOpen = !todayPlanOpen
     }
 
-    fun resizeToday(delta: Int) {
+    fun addExercise() = changeToday { repository.addToToday() }
+
+    fun removeExercise(exerciseId: String) = changeToday { repository.removeFromToday(exerciseId) }
+
+    fun reorderToday(idsInOrder: List<String>) = changeToday { repository.reorderToday(idsInOrder) }
+
+    private fun changeToday(change: suspend () -> SessionPlan?) {
         if (adjusting) return
         val session = today ?: return
         adjusting = true
         viewModelScope.launch {
             try {
                 gate.withLock {
-                    val resized = repository.resizeToday(delta) ?: return@withLock
-                    if (resized.exercises == session.plan.exercises) return@withLock
-                    val realigned = realign(sets, session.plan, resized)
-                    today = session.copy(plan = resized)
+                    val edited = change() ?: return@withLock
+                    if (edited.exercises == session.plan.exercises) return@withLock
+                    val currentId = session.plan.exercises.getOrNull(exerciseIndex)?.exerciseId
+                    val realigned = realign(sets, session.plan, edited)
+                    today = session.copy(plan = edited)
                     sets = realigned
-                    exerciseIndex = exerciseIndex.coerceIn(0, resized.exercises.lastIndex.coerceAtLeast(0))
+                    val kept = edited.exercises.indexOfFirst { it.exerciseId == currentId }
+                    exerciseIndex = if (kept >= 0) {
+                        kept
+                    } else {
+                        exerciseIndex.coerceIn(0, edited.exercises.lastIndex.coerceAtLeast(0))
+                    }
                     setsDirty = false
-                    repository.replaceSets(resized, realigned)
+                    repository.replaceSets(edited, realigned)
                 }
                 scheduleBackup()
             } finally {
@@ -564,18 +576,24 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         previous: List<List<SetDraft>>,
         before: SessionPlan,
         after: SessionPlan,
-    ): List<List<SetDraft>> = after.exercises.mapIndexed { index, planned ->
-        val oldPlan = before.exercises.getOrNull(index)
-        val oldSets = previous.getOrNull(index).orEmpty()
-        if (oldPlan?.exerciseId != planned.exerciseId) {
-            List(planned.sets) { SetDraft(planned.repsLow, planned.loadKg, done = false) }
-        } else {
-            List(planned.sets) { setIndex ->
-                val old = oldSets.getOrNull(setIndex)
-                when {
-                    old == null -> SetDraft(planned.repsLow, planned.loadKg, done = false)
-                    old.done -> old
-                    else -> old.copy(loadKg = planned.loadKg)
+    ): List<List<SetDraft>> {
+        val previousById = buildMap {
+            before.exercises.forEachIndexed { index, planned ->
+                if (planned.exerciseId !in this) put(planned.exerciseId, previous.getOrNull(index).orEmpty())
+            }
+        }
+        return after.exercises.map { planned ->
+            val oldSets = previousById[planned.exerciseId]
+            if (oldSets == null) {
+                List(planned.sets) { SetDraft(planned.repsLow, planned.loadKg, done = false) }
+            } else {
+                List(planned.sets) { setIndex ->
+                    val old = oldSets.getOrNull(setIndex)
+                    when {
+                        old == null -> SetDraft(planned.repsLow, planned.loadKg, done = false)
+                        old.done -> old
+                        else -> old.copy(loadKg = planned.loadKg)
+                    }
                 }
             }
         }

@@ -26,6 +26,12 @@ object Planner {
         delta: Int,
     ): SessionPlan = WorkoutSize.resize(plan, profile, catalog, history, delta)
 
+    fun removeExercise(plan: SessionPlan, exerciseId: String): SessionPlan =
+        WorkoutSize.remove(plan, exerciseId)
+
+    fun reorderSession(plan: SessionPlan, idsInOrder: List<String>): SessionPlan =
+        WorkoutSize.reorder(plan, idsInOrder)
+
     fun adoptVersion(
         plan: SessionPlan,
         catalog: Catalog,

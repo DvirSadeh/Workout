@@ -29,6 +29,21 @@ object WorkoutSize {
         return current
     }
 
+    fun remove(plan: SessionPlan, exerciseId: String): SessionPlan {
+        val index = plan.exercises.indexOfFirst { it.exerciseId == exerciseId }
+        if (index < 0 || plan.exercises.size <= range(plan.focus).first) return plan
+        return plan.copy(exercises = plan.exercises.filterIndexed { i, _ -> i != index })
+    }
+
+    fun reorder(plan: SessionPlan, idsInOrder: List<String>): SessionPlan {
+        val current = plan.exercises.map { it.exerciseId }
+        if (idsInOrder.size != current.size || idsInOrder.toSet() != current.toSet()) return plan
+        val byId = plan.exercises.associateBy { it.exerciseId }
+        val next = idsInOrder.map { byId.getValue(it) }
+        if (next == plan.exercises) return plan
+        return plan.copy(exercises = next)
+    }
+
     private fun addOne(
         plan: SessionPlan,
         profile: UserProfile,

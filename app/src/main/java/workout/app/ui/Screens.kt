@@ -9,6 +9,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
@@ -47,23 +51,40 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -71,6 +92,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.LocalDensity
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -272,35 +295,6 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                     )
                 }
                 if (model.todayPlanOpen) {
-                    val length = WorkoutSize.range(plan.focus)
-                    Text(
-                        stringResource(R.string.adjust_length_help),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(
-                            onClick = { model.resizeToday(-1) },
-                            enabled = plan.exercises.size > length.first,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(16.dp),
-                        ) {
-                            Text(stringResource(R.string.shorter))
-                        }
-                        OutlinedButton(
-                            onClick = { model.resizeToday(1) },
-                            enabled = plan.exercises.size < length.last,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(16.dp),
-                        ) {
-                            Text(stringResource(R.string.longer))
-                        }
-                    }
-                    Text(
-                        stringResource(R.string.tap_exercise_hardness),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
                     if (session.completed) {
                         val rating = session.rating?.let { ratingLabel(it) } ?: ""
                         Text(
@@ -332,30 +326,7 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                             )
                         }
                     }
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        plan.exercises.withIndex().chunked(2).forEach { pair ->
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                pair.forEach { (index, planned) ->
-                                    val exercise = model.catalog.find(planned.exerciseId)
-                                    val finished = model.sets.getOrNull(index).orEmpty().let { row ->
-                                        row.isNotEmpty() && row.all { it.done }
-                                    }
-                                    SessionTile(
-                                        name = exercise?.name ?: planned.exerciseId,
-                                        detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
-                                            loadSuffix(planned.loadKg, exercise?.loadType),
-                                        finished = finished,
-                                        onClick = { model.openExercise(planned.exerciseId) },
-                                        modifier = Modifier.weight(1f),
-                                    )
-                                }
-                                if (pair.size == 1) Spacer(Modifier.weight(1f))
-                            }
-                        }
-                    }
+                    AdjustableExercises(model, session)
                 }
                 if (session.completed || started) {
                     OutlinedButton(
@@ -606,42 +577,322 @@ private fun CalendarCard(
 }
 
 @Composable
-private fun SessionTile(
+private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) {
+    val plan = session.plan
+    val exercises = plan.exercises
+    val limits = WorkoutSize.range(plan.focus)
+    val canRemove = exercises.size > limits.first
+    val canAdd = exercises.size < limits.last
+    val haptics = LocalHapticFeedback.current
+    val slots = remember { mutableStateMapOf<Int, Rect>() }
+    var gridOrigin by remember { mutableStateOf(Offset.Zero) }
+    var fromSlot by remember { mutableIntStateOf(-1) }
+    var hoverSlot by remember { mutableIntStateOf(-1) }
+    var pointer by remember { mutableStateOf(Offset.Zero) }
+    var grabOffset by remember { mutableStateOf(Offset.Zero) }
+    val dragging = fromSlot >= 0
+    val cells = exercises.size + if (canAdd) 1 else 0
+
+    Box(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .onGloballyPositioned { gridOrigin = it.positionInRoot() }
+                .pointerInput(exercises) {
+                    arrangeExercises(
+                        exerciseAt = { position ->
+                            val finger = gridOrigin + position
+                            slots.entries.firstOrNull { (index, rect) ->
+                                index < exercises.size && rect.contains(finger)
+                            }?.key
+                        },
+                        onOpen = { index ->
+                            model.openExercise(exercises[index].exerciseId)
+                        },
+                        onDragStart = { index, position ->
+                            fromSlot = index
+                            hoverSlot = index
+                            pointer = position
+                            val topLeft = slots[index]?.topLeft?.minus(gridOrigin) ?: Offset.Zero
+                            grabOffset = position - topLeft
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        },
+                        onMove = { position ->
+                            pointer = position
+                            val finger = gridOrigin + position
+                            val hover = slots.entries.firstOrNull { (index, rect) ->
+                                index < exercises.size && rect.contains(finger)
+                            }?.key
+                            if (hover != null) hoverSlot = hover
+                        },
+                        onDrop = {
+                            val from = fromSlot
+                            val to = hoverSlot
+                            fromSlot = -1
+                            hoverSlot = -1
+                            if (from < 0 || to < 0 || from == to) return@arrangeExercises
+                            if (from > exercises.lastIndex || to > exercises.lastIndex) return@arrangeExercises
+                            val ids = exercises.map { it.exerciseId }.toMutableList()
+                            ids.add(to, ids.removeAt(from))
+                            model.reorderToday(ids)
+                        },
+                        onCancel = {
+                            fromSlot = -1
+                            hoverSlot = -1
+                        },
+                    )
+                },
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            for (row in 0 until (cells + 1) / 2) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for (column in 0..1) {
+                        val index = row * 2 + column
+                        when {
+                            index < exercises.size -> {
+                                val planned = exercises[index]
+                                val exercise = model.catalog.find(planned.exerciseId)
+                                val name = exercise?.name ?: planned.exerciseId
+                                val finished = model.sets.getOrNull(index).orEmpty().let { rowSets ->
+                                    rowSets.isNotEmpty() && rowSets.all { it.done }
+                                }
+                                ExerciseTile(
+                                    name = name,
+                                    detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
+                                        loadSuffix(planned.loadKg, exercise?.loadType),
+                                    finished = finished,
+                                    removeLabel = stringResource(R.string.remove_exercise, name),
+                                    canRemove = canRemove,
+                                    highlighted = dragging && index == hoverSlot && hoverSlot != fromSlot,
+                                    dimmed = index == fromSlot,
+                                    onRemove = { model.removeExercise(planned.exerciseId) },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(108.dp)
+                                        .onGloballyPositioned { coords ->
+                                            slots[index] = Rect(
+                                                coords.positionInRoot(),
+                                                Size(coords.size.width.toFloat(), coords.size.height.toFloat()),
+                                            )
+                                        },
+                                )
+                            }
+                            index == exercises.size && canAdd -> AddExerciseTile(
+                                label = stringResource(R.string.add_exercise),
+                                onAdd = model::addExercise,
+                                modifier = Modifier.weight(1f).height(108.dp),
+                            )
+                            else -> Spacer(Modifier.weight(1f).height(108.dp))
+                        }
+                    }
+                }
+            }
+        }
+        if (dragging) {
+            val planned = exercises.getOrNull(fromSlot)
+            val rect = slots[fromSlot]
+            if (planned != null && rect != null) {
+                val exercise = model.catalog.find(planned.exerciseId)
+                val name = exercise?.name ?: planned.exerciseId
+                val density = LocalDensity.current
+                val left = pointer.x - grabOffset.x
+                val top = pointer.y - grabOffset.y
+                ExerciseTile(
+                    name = name,
+                    detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
+                        loadSuffix(planned.loadKg, exercise?.loadType),
+                    finished = false,
+                    removeLabel = "",
+                    canRemove = false,
+                    highlighted = true,
+                    dimmed = false,
+                    lifted = true,
+                    onRemove = {},
+                    modifier = Modifier.layout { measurable, _ ->
+                        val width = rect.width.roundToInt().coerceAtLeast(1)
+                        val height = rect.height.roundToInt().coerceAtLeast(1)
+                        val placeable = measurable.measure(Constraints.fixed(width, height))
+                        layout(0, 0) {
+                            placeable.placeWithLayer(left.roundToInt(), top.roundToInt()) {
+                                shadowElevation = with(density) { 12.dp.toPx() }
+                                scaleX = 1.04f
+                                scaleY = 1.04f
+                            }
+                        }
+                    },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExerciseTile(
     name: String,
     detail: String,
     finished: Boolean,
-    onClick: () -> Unit,
+    removeLabel: String,
+    canRemove: Boolean,
+    highlighted: Boolean,
+    dimmed: Boolean,
+    onRemove: () -> Unit,
     modifier: Modifier = Modifier,
+    lifted: Boolean = false,
 ) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier,
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-    ) {
-        Column(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+    Box(modifier.alpha(if (dimmed) 0.35f else 1f)) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .then(
+                    if (highlighted) {
+                        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp))
+                    } else {
+                        Modifier
+                    },
+                ),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Column(
+                Modifier.padding(start = 12.dp, top = 12.dp, end = 40.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    name,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Text(
+                    detail,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                if (finished) {
+                    Text(
+                        stringResource(R.string.done),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
+        }
+        Box(
+            Modifier
+                .align(Alignment.TopEnd)
+                .padding(6.dp)
+                .size(32.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.background.copy(alpha = if (canRemove || lifted) 1f else 0.45f))
+                .then(
+                    if (lifted) {
+                        Modifier
+                    } else {
+                        Modifier.tapControl(enabled = canRemove, label = removeLabel, onTap = onRemove)
+                    },
+                ),
+            contentAlignment = Alignment.Center,
         ) {
             Text(
-                name,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleSmall,
+                "−",
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (canRemove || lifted) 1f else 0.45f),
+                style = MaterialTheme.typography.titleMedium,
             )
-            Text(
-                detail,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
-            if (finished) {
-                Text(
-                    stringResource(R.string.done),
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                )
+        }
+    }
+}
+
+@Composable
+private fun AddExerciseTile(
+    label: String,
+    onAdd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .tapControl(enabled = true, label = label, onTap = onAdd),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "+",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+private fun Modifier.tapControl(enabled: Boolean, label: String, onTap: () -> Unit): Modifier {
+    return this
+        .semantics {
+            contentDescription = label
+            role = Role.Button
+        }
+        .pointerInput(enabled, label) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                val pointerId = down.id
+                down.consume()
+                var moved = false
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == pointerId } ?: return@awaitEachGesture
+                    if (change.changedToUpIgnoreConsumed()) {
+                        change.consume()
+                        if (!moved && enabled) onTap()
+                        return@awaitEachGesture
+                    }
+                    if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                        moved = true
+                    }
+                }
+            }
+        }
+}
+
+private suspend fun androidx.compose.ui.input.pointer.PointerInputScope.arrangeExercises(
+    exerciseAt: (Offset) -> Int?,
+    onOpen: (Int) -> Unit,
+    onDragStart: (Int, Offset) -> Unit,
+    onMove: (Offset) -> Unit,
+    onDrop: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = true)
+        val slot = exerciseAt(down.position) ?: return@awaitEachGesture
+        val outcome = withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull "cancel"
+                if (change.changedToUpIgnoreConsumed()) return@withTimeoutOrNull "up"
+                if ((change.position - down.position).getDistance() > viewConfiguration.touchSlop) {
+                    return@withTimeoutOrNull "move"
+                }
+                if (change.isConsumed) return@withTimeoutOrNull "cancel"
+            }
+        }
+        when (outcome) {
+            "up" -> onOpen(slot)
+            null -> {
+                onDragStart(slot, down.position)
+                val completed = try {
+                    drag(down.id) { change ->
+                        onMove(change.position)
+                        change.consume()
+                    }
+                } catch (cancel: CancellationException) {
+                    onCancel()
+                    throw cancel
+                }
+                if (completed) onDrop() else onCancel()
             }
         }
     }

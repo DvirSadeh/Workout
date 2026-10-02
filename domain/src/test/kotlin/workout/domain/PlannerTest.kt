@@ -339,6 +339,28 @@ class PlannerTest {
     }
 
     @Test
+    fun removeDropsThatExerciseAndStopsAtTheMinimum() {
+        val profile = profile(minutes = 20)
+        val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        val removedId = plan.exercises[1].exerciseId
+        val removed = Planner.removeExercise(plan, removedId)
+        assertEquals(listOf(plan.exercises[0], plan.exercises[2], plan.exercises[3]), removed.exercises)
+        assertEquals(removed, Planner.removeExercise(removed, removed.exercises.first().exerciseId))
+        assertEquals(plan, Planner.removeExercise(plan, "missing"))
+    }
+
+    @Test
+    fun reorderKeepsTheSameExercisesInTheRequestedOrder() {
+        val profile = profile(minutes = 20)
+        val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        val ids = plan.exercises.map { it.exerciseId }
+        val moved = Planner.reorderSession(plan, listOf(ids[2], ids[0], ids[1], ids[3]))
+        assertEquals(listOf(plan.exercises[2], plan.exercises[0], plan.exercises[1], plan.exercises[3]), moved.exercises)
+        assertEquals(plan, Planner.reorderSession(plan, ids))
+        assertEquals(plan, Planner.reorderSession(plan, listOf(ids[0], ids[0], ids[1], ids[2])))
+    }
+
+    @Test
     fun harderLeavesTheRestOfTheSessionAlone() {
         val profile = profile(minutes = 60)
         val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)

@@ -181,15 +181,29 @@ class WorkoutRepository(
         dao.saveSession(entity.copy(rating = rating.name, completed = true))
     }
 
-    suspend fun resizeToday(delta: Int): SessionPlan? = withContext(Dispatchers.IO) {
+    suspend fun addToToday(): SessionPlan? = editToday { plan, profile, catalog, history ->
+        Planner.resizeSession(plan, profile, catalog, history, 1)
+    }
+
+    suspend fun removeFromToday(exerciseId: String): SessionPlan? = editToday { plan, _, _, _ ->
+        Planner.removeExercise(plan, exerciseId)
+    }
+
+    suspend fun reorderToday(idsInOrder: List<String>): SessionPlan? = editToday { plan, _, _, _ ->
+        Planner.reorderSession(plan, idsInOrder)
+    }
+
+    private suspend fun editToday(
+        edit: (SessionPlan, UserProfile, Catalog, List<SessionRecord>) -> SessionPlan,
+    ): SessionPlan? = withContext(Dispatchers.IO) {
         val profile = dao.profile()?.toProfile() ?: return@withContext null
         val today = LocalDate.now()
         val entity = dao.session(today.toString()) ?: return@withContext null
         val plan = parsePlan(entity.planJson)
-        val resized = Planner.resizeSession(plan, profile, catalog, historyRecords(today), delta)
-        if (resized.exercises == plan.exercises) return@withContext plan
-        dao.saveSession(entity.copy(planJson = resized.toJson()))
-        resized
+        val edited = edit(plan, profile, catalog, historyRecords(today))
+        if (edited.exercises == plan.exercises) return@withContext plan
+        dao.saveSession(entity.copy(planJson = edited.toJson()))
+        edited
     }
 
     suspend fun resetToday() = withContext(Dispatchers.IO) {
