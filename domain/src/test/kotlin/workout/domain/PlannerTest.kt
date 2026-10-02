@@ -283,6 +283,33 @@ class PlannerTest {
     }
 
     @Test
+    fun steppingReplacesTheExerciseInTheFrame() {
+        val profile = profile()
+        val stepUps = PlannedExercise("Dumbbell_Step_Ups", 3, 8, 12, 10.0, 60, "step ups", anchor = false)
+        val rear = PlannedExercise("Dumbbell_Rear_Lunge", 3, 8, 12, 10.0, 60, "rear", anchor = true)
+        val plan = SessionPlan(
+            date = start,
+            note = "",
+            exercises = listOf(stepUps, rear),
+            source = PlanSource.FALLBACK,
+            blockIndex = 0,
+            weekInBlock = 0,
+            focus = DayFocus.LOWER,
+            deload = false,
+        )
+        val easier = Planner.adoptVersion(plan, catalog, profile, "Split_Squat_with_Dumbbells", "Dumbbell_Step_Ups")
+        assertEquals("Split_Squat_with_Dumbbells", easier.plan.exercises[0].exerciseId)
+        assertEquals("Dumbbell_Rear_Lunge", easier.plan.exercises[1].exerciseId)
+        assertEquals(3, easier.plan.exercises[0].sets)
+        assertEquals(8 to 12, easier.plan.exercises[0].repsLow to easier.plan.exercises[0].repsHigh)
+        assertEquals(10.0, easier.plan.exercises[0].loadKg)
+        val harder = Planner.adoptVersion(easier.plan, catalog, profile, "Dumbbell_Step_Ups", "Split_Squat_with_Dumbbells")
+        assertEquals("Dumbbell_Step_Ups", harder.plan.exercises[0].exerciseId)
+        assertEquals("Dumbbell_Rear_Lunge", harder.plan.exercises[1].exerciseId)
+        assertEquals(10.0, harder.plan.exercises[0].loadKg)
+    }
+
+    @Test
     fun choosingAVersionThePlanCannotDoIsRefused() {
         val profile = profile(bench = false)
         val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)

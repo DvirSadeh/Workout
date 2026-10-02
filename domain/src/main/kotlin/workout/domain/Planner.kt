@@ -46,7 +46,8 @@ object Planner {
         catalog: Catalog,
         profile: UserProfile,
         chosenExerciseId: String,
-    ): AdjustmentResult = Adjustments.adopt(plan, catalog, profile, chosenExerciseId)
+        replacingExerciseId: String? = null,
+    ): AdjustmentResult = Adjustments.adopt(plan, catalog, profile, chosenExerciseId, replacingExerciseId)
 
     fun applyAdjustment(
         plan: SessionPlan,

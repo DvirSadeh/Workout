@@ -307,11 +307,12 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     fun useThisToday(exerciseId: String) {
         if (adjusting) return
         val session = today ?: return
+        val replacing = (screen as? Screen.Exercise)?.id
         adjusting = true
         viewModelScope.launch {
             try {
                 gate.withLock {
-                    val result = repository.adoptVersion(exerciseId)
+                    val result = repository.adoptVersion(exerciseId, replacing)
                     if (result.adjustments.isEmpty()) return@withLock
                     val realigned = realign(sets, session.plan, result.plan)
                     today = session.copy(plan = result.plan)

@@ -129,12 +129,15 @@ class WorkoutRepository(
         result
     }
 
-    suspend fun adoptVersion(chosenExerciseId: String): AdjustmentResult = withContext(Dispatchers.IO) {
+    suspend fun adoptVersion(
+        chosenExerciseId: String,
+        replacingExerciseId: String? = null,
+    ): AdjustmentResult = withContext(Dispatchers.IO) {
         val profile = dao.profile()?.toProfile() ?: error("Profile missing")
         val today = LocalDate.now().toString()
         val entity = dao.session(today) ?: error("No session")
         val plan = parsePlan(entity.planJson)
-        val result = Planner.adoptVersion(plan, catalog, profile, chosenExerciseId)
+        val result = Planner.adoptVersion(plan, catalog, profile, chosenExerciseId, replacingExerciseId)
         if (result.adjustments.isEmpty()) return@withContext result
         dao.saveSession(entity.copy(planJson = result.plan.toJson()))
         val families = result.adjustments.map { it.familyId }.toSet()

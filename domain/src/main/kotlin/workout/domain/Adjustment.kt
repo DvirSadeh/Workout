@@ -109,6 +109,7 @@ object Adjustments {
         catalog: Catalog,
         profile: UserProfile,
         chosenExerciseId: String,
+        replacingExerciseId: String? = null,
     ): AdjustmentResult {
         val chosen = catalog.find(chosenExerciseId)
             ?: return AdjustmentResult(plan, emptyList(), "That exercise is not in the catalog.")
@@ -130,7 +131,8 @@ object Adjustments {
         if (candidates.isEmpty()) {
             return AdjustmentResult(plan, emptyList(), "That movement is not in today's workout.")
         }
-        val target = candidates.minWith(
+        val framed = candidates.firstOrNull { plan.exercises[it].exerciseId == replacingExerciseId }
+        val target = framed ?: candidates.minWith(
             compareBy(
                 { if (plan.exercises[it].anchor) 0 else 1 },
                 { abs((catalog.find(plan.exercises[it].exerciseId)?.tier ?: 0) - chosen.tier) },

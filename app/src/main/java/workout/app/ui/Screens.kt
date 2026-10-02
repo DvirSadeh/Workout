@@ -24,21 +24,17 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.PageSize
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
@@ -79,7 +75,6 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -645,6 +640,11 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
     }
     val shownIds = remember { mutableStateOf(displayIds) }
     shownIds.value = displayIds
+    SideEffect {
+        val keep = displayIds.toSet()
+        slots.keys.toList().filter { it !in keep }.forEach { slots.remove(it) }
+        rowHeights.keys.toList().filter { it !in keep }.forEach { rowHeights.remove(it) }
+    }
     LaunchedEffect(committedIds) {
         if (previewIds == committedIds) previewIds = null
     }
@@ -1592,146 +1592,87 @@ private fun HardnessChooser(model: WorkoutViewModel, exercise: ProgrammedExercis
     fun allowed(id: String) = id == todayExercise.id || eligible == null || id in eligible
     val versions = model.catalog.inFamily(exercise.familyId).filter { allowed(it.id) }
     if (versions.size < 2) return
-    key(exercise.familyId) {
-        VersionStrip(model, exercise.id, todayExercise.id, versions)
-    }
-    VersionAction(
-        isToday = exercise.id == todayExercise.id,
-        onUse = { model.useThisToday(exercise.id) },
+    val index = versions.indexOfFirst { it.id == exercise.id }.let { found ->
+        if (found >= 0) found else versions.indexOfFirst { it.id == todayExercise.id }
+    }.coerceAtLeast(0)
+    val taken = session.plan.exercises.map { it.exerciseId }.toSet()
+    val easier = versions.getOrNull(index - 1)?.takeUnless { it.id in taken }
+    val harder = versions.getOrNull(index + 1)?.takeUnless { it.id in taken }
+    VersionFrame(
+        name = exercise.name,
+        easierEnabled = easier != null,
+        harderEnabled = harder != null,
+        onEasier = { if (easier != null) model.useThisToday(easier.id) },
+        onHarder = { if (harder != null) model.useThisToday(harder.id) },
     )
 }
 
 @Composable
-private fun VersionAction(isToday: Boolean, onUse: () -> Unit) {
-    if (isToday) {
+private fun VersionFrame(
+    name: String,
+    easierEnabled: Boolean,
+    harderEnabled: Boolean,
+    onEasier: () -> Unit,
+    onHarder: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(96.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        StepButton(
+            label = stringResource(R.string.easier_side),
+            enabled = easierEnabled,
+            onClick = onEasier,
+        )
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
+                .weight(1f)
+                .fillMaxHeight(),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.primary,
+            contentColor = MaterialTheme.colorScheme.onPrimary,
         ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Box(Modifier.fillMaxSize().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) {
                 Text(
-                    stringResource(R.string.todays_version),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelLarge,
+                    name,
+                    textAlign = TextAlign.Center,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
         }
-    } else {
-        Button(
-            onClick = onUse,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-            shape = RoundedCornerShape(12.dp),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
-        ) {
-            Text(stringResource(R.string.use_this_today))
-        }
+        StepButton(
+            label = stringResource(R.string.harder_side),
+            enabled = harderEnabled,
+            onClick = onHarder,
+        )
     }
 }
 
 @Composable
-private fun VersionStrip(
-    model: WorkoutViewModel,
-    viewingId: String,
-    todayId: String,
-    versions: List<ProgrammedExercise>,
-) {
-    val start = versions.indexOfFirst { it.id == viewingId }.coerceAtLeast(0)
-    val pagerState = rememberPagerState(initialPage = start, pageCount = { versions.size })
-    val scope = rememberCoroutineScope()
-    val pageWidth = 200.dp
-    val todayTier = versions.firstOrNull { it.id == todayId }?.tier
-    LaunchedEffect(pagerState.settledPage) {
-        val chosen = versions.getOrNull(pagerState.settledPage)
-        if (chosen != null && chosen.id != viewingId) model.openExercise(chosen.id)
-    }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                stringResource(R.string.easier_side),
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                stringResource(R.string.harder_side),
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
-        BoxWithConstraints(Modifier.fillMaxWidth().height(96.dp)) {
-            val side = ((maxWidth - pageWidth) / 2).coerceAtLeast(0.dp)
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = side),
-                pageSize = PageSize.Fixed(pageWidth),
-                pageSpacing = 8.dp,
-                snapPosition = SnapPosition.Center,
-                verticalAlignment = Alignment.CenterVertically,
-            ) { page ->
-                val version = versions[page]
-                val caption = when {
-                    version.id == todayId -> stringResource(R.string.version_today)
-                    todayTier != null && version.tier < todayTier -> stringResource(R.string.easier)
-                    else -> stringResource(R.string.harder)
-                }
-                VersionChip(
-                    name = version.name,
-                    caption = caption,
-                    today = version.id == todayId,
-                    viewing = page == pagerState.currentPage,
-                    onSelect = { scope.launch { pagerState.animateScrollToPage(page) } },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun VersionChip(
-    name: String,
-    caption: String,
-    today: Boolean,
-    viewing: Boolean,
-    onSelect: () -> Unit,
-) {
-    val background = when {
-        viewing -> MaterialTheme.colorScheme.primary
-        today -> MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-    val foreground = if (viewing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+private fun StepButton(label: String, enabled: Boolean, onClick: () -> Unit) {
     Surface(
-        onClick = onSelect,
-        modifier = Modifier.fillMaxSize(),
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .width(84.dp)
+            .fillMaxHeight()
+            .alpha(if (enabled) 1f else 0.35f),
         shape = RoundedCornerShape(16.dp),
-        color = background,
-        contentColor = foreground,
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.primary,
     ) {
-        Column(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.Center,
-        ) {
+        Box(Modifier.fillMaxSize().padding(horizontal = 6.dp), contentAlignment = Alignment.Center) {
             Text(
-                caption,
-                modifier = Modifier.height(20.dp),
-                color = if (viewing) foreground else MaterialTheme.colorScheme.primary,
+                label,
+                textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.labelLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                name,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
             )
         }
     }
