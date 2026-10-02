@@ -109,8 +109,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -124,7 +126,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import workout.app.R
-import workout.app.data.SetDraft
 import workout.app.data.TodaySession
 import workout.domain.AdjustmentDirection
 import workout.domain.DayFocus
@@ -132,6 +133,8 @@ import workout.domain.Experience
 import workout.domain.Goal
 import workout.domain.LimitTag
 import workout.domain.LoadType
+import workout.domain.PlayMode
+import workout.domain.PlayStep
 import workout.domain.SessionRating
 import workout.domain.Sex
 import workout.domain.PlannedExercise
@@ -1394,57 +1397,154 @@ private fun PlayerScreen(model: WorkoutViewModel) {
         }
         return
     }
-    val index = model.exerciseIndex.coerceIn(0, plan.exercises.lastIndex)
-    val planned = plan.exercises[index]
-    val exercise = model.catalog.find(planned.exerciseId)
-    val row = model.sets.getOrNull(index).orEmpty()
+    if (model.today?.completed == true) {
+        FinishedSession(model, plan)
+        return
+    }
+    val steps = model.playSteps()
+    val step = steps.getOrNull(model.stepIndex)
     Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .imePadding()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 20.dp),
+        ) {
+            TextButton(onClick = model::back) { Text(stringResource(R.string.back)) }
+            if (model.askRating) {
+                RatingBlock(model, Modifier.weight(1f))
+            } else {
+                PlayModeToggle(model)
+                Text(
+                    stringResource(
+                        if (model.playMode == PlayMode.CIRCUIT) R.string.mode_row_note else R.string.mode_each_note,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(8.dp))
+                when (step) {
+                    is PlayStep.Rest -> RestStep(model, steps, Modifier.weight(1f))
+                    is PlayStep.Work -> WorkStep(model, plan, step, Modifier.weight(1f))
+                    null -> FinishedStep(model, Modifier.weight(1f))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayModeToggle(model: WorkoutViewModel) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ModeChip(
+            label = stringResource(R.string.mode_each),
+            selected = model.playMode == PlayMode.STRAIGHT,
+            onClick = { model.choosePlayMode(PlayMode.STRAIGHT) },
+        )
+        ModeChip(
+            label = stringResource(R.string.mode_row),
+            selected = model.playMode == PlayMode.CIRCUIT,
+            onClick = { model.choosePlayMode(PlayMode.CIRCUIT) },
+        )
+    }
+}
+
+@Composable
+private fun RowScope.ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    val modifier = Modifier.weight(1f).height(48.dp)
+    val shape = RoundedCornerShape(14.dp)
+    if (selected) {
+        Button(onClick = onClick, modifier = modifier, shape = shape) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    } else {
+        OutlinedButton(onClick = onClick, modifier = modifier, shape = shape) {
+            Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun WorkStep(
+    model: WorkoutViewModel,
+    plan: workout.domain.SessionPlan,
+    work: PlayStep.Work,
+    modifier: Modifier,
+) {
+    val planned = plan.exercises.getOrNull(work.exerciseIndex)
+    val exercise = planned?.let { model.catalog.find(it.exerciseId) }
+    val draft = model.sets.getOrNull(work.exerciseIndex)?.getOrNull(work.setIndex)
+    Column(modifier) {
+        Column(
+            Modifier
+                .weight(1f)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = model::previousExercise, enabled = index > 0) {
-                    Text(stringResource(R.string.previous))
-                }
+            if (planned != null) {
                 Text(
-                    stringResource(R.string.exercise_count, index + 1, plan.exercises.size),
-                    modifier = Modifier.weight(1f),
+                    exercise?.name ?: planned.exerciseId,
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                Text(
+                    if (model.playMode == PlayMode.CIRCUIT) {
+                        val rounds = plan.exercises.maxOf { it.sets }.coerceAtLeast(1)
+                        stringResource(
+                            R.string.play_circuit_place,
+                            work.setIndex + 1,
+                            rounds,
+                            work.exerciseIndex + 1,
+                            plan.exercises.size,
+                        )
+                    } else {
+                        stringResource(
+                            R.string.play_straight_place,
+                            work.setIndex + 1,
+                            planned.sets,
+                            work.exerciseIndex + 1,
+                            plan.exercises.size,
+                        )
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.titleMedium,
                 )
-                TextButton(onClick = model::nextExercise, enabled = index < plan.exercises.lastIndex) {
-                    Text(stringResource(R.string.next))
+                if (planned.anchor) {
+                    Text(stringResource(R.string.main_lift_badge), color = MaterialTheme.colorScheme.primary)
+                }
+                ExercisePhotos(exercise?.imageFiles.orEmpty(), photoHeight = 168.dp)
+                Text(
+                    stringResource(R.string.prescription, planned.sets, prescription(planned)) +
+                        loadSuffix(planned.loadKg, exercise?.loadType),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (planned.reason.isNotBlank()) {
+                    Text(planned.reason, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            Text(exercise?.name ?: planned.exerciseId, style = MaterialTheme.typography.headlineSmall)
-            if (planned.anchor) {
-                Text(stringResource(R.string.main_lift_badge), color = MaterialTheme.colorScheme.primary)
+            if (draft != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        stringResource(R.string.reps_label),
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    TextButton(onClick = { model.changeReps(-1) }) { Text("−") }
+                    Text(draft.reps.toString(), style = MaterialTheme.typography.headlineSmall)
+                    TextButton(onClick = { model.changeReps(1) }) { Text("+") }
+                }
             }
-            ExercisePhotos(exercise?.imageFiles.orEmpty())
-            Text(
-                stringResource(R.string.prescription, planned.sets, prescription(planned)) +
-                    loadSuffix(planned.loadKg, exercise?.loadType),
-            )
-            if (planned.reason.isNotBlank()) Text(planned.reason)
             if (exercise?.loadType == LoadType.DUMBBELL) {
                 DumbbellPicker(
                     owned = model.profile?.dumbbellKg.orEmpty(),
-                    selected = row.firstOrNull { !it.done }?.loadKg ?: row.firstOrNull()?.loadKg,
+                    selected = draft?.loadKg,
                     onSelect = model::selectLoad,
-                )
-            }
-            row.forEachIndexed { setIndex, draft ->
-                SetRow(
-                    number = setIndex + 1,
-                    draft = draft,
-                    onLess = { model.changeReps(setIndex, -1) },
-                    onMore = { model.changeReps(setIndex, 1) },
-                    onDone = { model.toggleDone(setIndex) },
                 )
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1456,51 +1556,137 @@ private fun PlayerScreen(model: WorkoutViewModel) {
                 }
             }
             if (model.coachMessage.isNotBlank()) Text(model.coachMessage)
-            TextButton(onClick = model::openHowTo) { Text(stringResource(R.string.how_to)) }
-            if (model.restRemaining > 0) {
-                Text(
-                    stringResource(R.string.rest_for, model.restRemaining),
-                    style = MaterialTheme.typography.headlineMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                TextButton(onClick = model::skipRest) { Text(stringResource(R.string.skip_rest)) }
-            }
-            if (model.askRating) {
-                Text(stringResource(R.string.rate_prompt), style = MaterialTheme.typography.titleMedium)
-                SessionRating.entries.forEach { rating ->
-                    Button(onClick = { model.rate(rating) }, modifier = Modifier.fillMaxWidth()) {
-                        Text(ratingLabel(rating))
-                    }
-                }
-                TextButton(onClick = model::dismissRating) { Text(stringResource(R.string.back)) }
-            } else {
-                Button(onClick = model::requestFinish, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.finish))
-                }
+            Row {
+                TextButton(onClick = model::openHowTo) { Text(stringResource(R.string.how_to)) }
+                TextButton(onClick = model::requestFinish) { Text(stringResource(R.string.finish)) }
             }
             Text(stringResource(R.string.disclaimer), style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(8.dp))
+        }
+        MainAction(onClick = model::completeCurrent, label = stringResource(R.string.done))
+        SkipAction(model)
+    }
+}
+
+@Composable
+private fun RestStep(model: WorkoutViewModel, steps: List<PlayStep>, modifier: Modifier) {
+    val next = steps.drop(model.stepIndex + 1).firstNotNullOfOrNull { it as? PlayStep.Work }
+    val nextName = next?.let { work ->
+        val planned = model.today?.plan?.exercises?.getOrNull(work.exerciseIndex)
+        planned?.let { model.catalog.find(it.exerciseId)?.name ?: it.exerciseId }
+    }
+    Column(modifier) {
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                stringResource(R.string.rest),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.headlineSmall,
+            )
+            Text(
+                model.restRemaining.toString(),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.displayLarge.copy(
+                    fontSize = 96.sp,
+                    fontWeight = FontWeight.SemiBold,
+                ),
+            )
+            if (next != null && nextName != null) {
+                Text(
+                    stringResource(R.string.next_set, nextName, next.setIndex + 1),
+                    modifier = Modifier.padding(top = 8.dp),
+                    textAlign = TextAlign.Center,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
+        }
+        SkipAction(model)
+    }
+}
+
+@Composable
+private fun FinishedStep(model: WorkoutViewModel, modifier: Modifier) {
+    Column(modifier) {
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                stringResource(R.string.workout_complete),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.headlineMedium,
+            )
+        }
+        MainAction(onClick = model::requestFinish, label = stringResource(R.string.finish))
+        Spacer(Modifier.height(8.dp))
+    }
+}
+
+@Composable
+private fun RatingBlock(model: WorkoutViewModel, modifier: Modifier) {
+    Column(
+        modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            stringResource(R.string.rate_prompt),
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.headlineSmall,
+        )
+        SessionRating.entries.forEach { rating ->
+            Button(
+                onClick = { model.rate(rating) },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Text(ratingLabel(rating), style = MaterialTheme.typography.titleMedium)
+            }
+        }
+        TextButton(onClick = model::dismissRating, modifier = Modifier.fillMaxWidth()) {
+            Text(stringResource(R.string.back))
         }
     }
 }
 
 @Composable
-private fun SetRow(
-    number: Int,
-    draft: SetDraft,
-    onLess: () -> Unit,
-    onMore: () -> Unit,
-    onDone: () -> Unit,
-) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.set_label, number), modifier = Modifier.weight(1f))
-        TextButton(onClick = onLess) { Text("−") }
-        Text(draft.reps.toString(), style = MaterialTheme.typography.titleMedium)
-        TextButton(onClick = onMore) { Text("+") }
-        if (draft.done) {
-            Button(onClick = onDone) { Text(stringResource(R.string.done)) }
-        } else {
-            OutlinedButton(onClick = onDone) { Text(stringResource(R.string.done)) }
+private fun MainAction(onClick: () -> Unit, label: String) {
+    Button(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().height(84.dp),
+        shape = RoundedCornerShape(20.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun SkipAction(model: WorkoutViewModel) {
+    TextButton(onClick = model::skipStep, modifier = Modifier.fillMaxWidth().height(48.dp)) {
+        Text(stringResource(R.string.skip), style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+@Composable
+private fun FinishedSession(model: WorkoutViewModel, plan: workout.domain.SessionPlan) {
+    ScreenFrame(title = stringResource(R.string.review_workout), onBack = model::back) {
+        plan.exercises.forEachIndexed { index, planned ->
+            val exercise = model.catalog.find(planned.exerciseId)
+            Text(exercise?.name ?: planned.exerciseId, style = MaterialTheme.typography.titleMedium)
+            model.sets.getOrNull(index).orEmpty().forEachIndexed { setIndex, draft ->
+                Text(
+                    stringResource(R.string.review_set, setIndex + 1, draft.reps) +
+                        loadSuffix(draft.loadKg, exercise?.loadType),
+                )
+            }
         }
     }
 }
@@ -1868,7 +2054,7 @@ private fun ScreenFrame(
 }
 
 @Composable
-private fun ExercisePhotos(files: List<String>) {
+private fun ExercisePhotos(files: List<String>, photoHeight: Dp = 240.dp) {
     val context = LocalContext.current
     val bitmaps by produceState(initialValue = emptyList<ImageBitmap>(), files) {
         value = withContext(Dispatchers.IO) {
@@ -1893,7 +2079,7 @@ private fun ExercisePhotos(files: List<String>) {
     Box(
         Modifier
             .fillMaxWidth()
-            .height(240.dp)
+            .height(photoHeight)
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {

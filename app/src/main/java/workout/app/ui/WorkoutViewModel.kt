@@ -31,7 +31,10 @@ import workout.domain.AdjustmentDirection
 import workout.domain.Experience
 import workout.domain.Goal
 import workout.domain.LimitTag
+import workout.domain.PlayMode
+import workout.domain.PlayStep
 import workout.domain.PlannedExercise
+import workout.domain.SessionOrder
 import workout.domain.SessionPlan
 import workout.domain.SessionRating
 import workout.domain.Sex
@@ -76,10 +79,12 @@ data class PendingRemoval(
 
 class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private val downloads = DownloadsBackup(app)
+    private val playPrefs = app.getSharedPreferences("workout_play", Context.MODE_PRIVATE)
     private lateinit var repository: WorkoutRepository
     private val gate = Mutex()
     private val backStack = ArrayDeque<Screen>()
     private var restJob: Job? = null
+    private var restToken = 0
     private var setsDirty = false
     private var adjusting = false
     private var backupJob: Job? = null
@@ -105,6 +110,10 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     var firstSession by mutableStateOf(true)
         private set
     var exerciseIndex by mutableIntStateOf(0)
+        private set
+    var playMode by mutableStateOf(readPlayMode())
+        private set
+    var stepIndex by mutableIntStateOf(0)
         private set
     var sets by mutableStateOf<List<List<SetDraft>>>(emptyList())
         private set
@@ -239,14 +248,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val loaded = gate.withLock { repository.savedSets(session.plan) }
             sets = loaded
-            val unfinished = loaded.indexOfFirst { row -> row.any { !it.done } }
-            exerciseIndex = when {
-                unfinished >= 0 -> unfinished
-                loaded.isNotEmpty() -> loaded.lastIndex
-                else -> 0
-            }
             coachMessage = ""
             askRating = false
+            landOnFirstUndone()
             show(Screen.Player)
         }
     }
@@ -270,28 +274,46 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         screen = backStack.last()
     }
 
-    fun previousExercise() {
-        if (exerciseIndex > 0) exerciseIndex -= 1
+    fun playSteps(): List<PlayStep> {
+        val plan = today?.plan ?: return emptyList()
+        return SessionOrder.sequence(
+            plan.exercises.map { it.sets },
+            plan.exercises.map { it.restSeconds },
+            playMode,
+        )
     }
 
-    fun nextExercise() {
-        val last = today?.plan?.exercises?.lastIndex ?: return
-        if (exerciseIndex < last) exerciseIndex += 1
+    fun choosePlayMode(mode: PlayMode) {
+        if (mode == playMode) return
+        playMode = mode
+        playPrefs.edit().putString(PLAY_MODE, mode.name).apply()
+        landOnFirstUndone()
     }
 
-    fun changeReps(setIndex: Int, delta: Int) {
-        editSet(setIndex) { it.copy(reps = (it.reps + delta).coerceIn(1, 40)) }
+    fun changeReps(delta: Int) {
+        val step = playSteps().getOrNull(stepIndex) as? PlayStep.Work ?: return
+        exerciseIndex = step.exerciseIndex
+        editSet(step.setIndex) { it.copy(reps = (it.reps + delta).coerceIn(1, 40)) }
     }
 
-    fun toggleDone(setIndex: Int) {
-        val row = sets.getOrNull(exerciseIndex) ?: return
-        val current = row.getOrNull(setIndex) ?: return
-        val nowDone = !current.done
-        editSet(setIndex) { it.copy(done = nowDone) }
-        if (nowDone && sets.getOrNull(exerciseIndex)?.any { !it.done } == true) {
-            val rest = today?.plan?.exercises?.getOrNull(exerciseIndex)?.restSeconds ?: 0
-            if (rest > 0) startRest(rest)
+    fun completeCurrent() {
+        val step = playSteps().getOrNull(stepIndex) as? PlayStep.Work ?: return
+        exerciseIndex = step.exerciseIndex
+        editSet(step.setIndex) { it.copy(done = true) }
+        advance()
+    }
+
+    fun skipStep() {
+        val steps = playSteps()
+        if (stepIndex >= steps.size) return
+        val nextWork = (stepIndex + 1 until steps.size).firstOrNull { steps[it] is PlayStep.Work }
+        stopRest()
+        if (nextWork == null) {
+            stepIndex = steps.size
+            return
         }
+        stepIndex = nextWork
+        exerciseIndex = (steps[nextWork] as PlayStep.Work).exerciseIndex
     }
 
     fun selectLoad(kilograms: Double) {
@@ -319,6 +341,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     sets = realigned
                     val slot = result.plan.exercises.indexOfFirst { it.exerciseId == exerciseId }
                     if (slot >= 0) exerciseIndex = slot
+                    stickToExercise()
                     setsDirty = false
                     repository.replaceSets(result.plan, realigned)
                     if (screen is Screen.Exercise) openExercise(exerciseId)
@@ -348,6 +371,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     sets = realigned
                     coachMessage = result.message
                     exerciseIndex = exerciseIndex.coerceIn(0, result.plan.exercises.lastIndex.coerceAtLeast(0))
+                    stickToExercise()
                     setsDirty = false
                     repository.replaceSets(result.plan, realigned)
                 }
@@ -415,6 +439,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 } else {
                     exerciseIndex.coerceIn(0, edited.exercises.lastIndex.coerceAtLeast(0))
                 }
+                stickToExercise()
                 setsDirty = false
                 repository.replaceSets(edited, realigned)
             }
@@ -443,6 +468,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     } else {
                         exerciseIndex.coerceIn(0, edited.exercises.lastIndex.coerceAtLeast(0))
                     }
+                    stickToExercise()
                     setsDirty = false
                     repository.replaceSets(edited, realigned)
                 }
@@ -464,12 +490,10 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 sets = session.plan.exercises.map { planned ->
                     List(planned.sets) { SetDraft(planned.repsLow, planned.loadKg, done = false) }
                 }
-                restJob?.cancel()
-                restRemaining = 0
                 askRating = false
                 coachMessage = ""
-                exerciseIndex = 0
                 setsDirty = false
+                landOnFirstUndone()
             }
             history = repository.history()
             best = repository.bestLifts()
@@ -496,17 +520,11 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 repository.finish(rating)
                 setsDirty = false
                 askRating = false
-                restJob?.cancel()
-                restRemaining = 0
+                stopRest()
             }
             loadHome(replaceStack = true)
             scheduleBackup()
         }
-    }
-
-    fun skipRest() {
-        restJob?.cancel()
-        restRemaining = 0
     }
 
     private fun editSet(setIndex: Int, change: (SetDraft) -> SetDraft) {
@@ -536,14 +554,79 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun startRest(seconds: Int) {
         restJob?.cancel()
+        val token = ++restToken
+        if (seconds <= 0) {
+            restRemaining = 0
+            return
+        }
         restJob = viewModelScope.launch {
             restRemaining = seconds
             while (restRemaining > 0) {
                 delay(1_000)
+                if (token != restToken) return@launch
                 restRemaining -= 1
             }
+            if (token == restToken) advance()
         }
     }
+
+    private fun stopRest() {
+        restJob?.cancel()
+        restToken += 1
+        restRemaining = 0
+    }
+
+    private fun advance() {
+        val steps = playSteps()
+        val next = stepIndex + 1
+        stopRest()
+        if (next >= steps.size) {
+            stepIndex = steps.size
+            return
+        }
+        stepIndex = next
+        when (val step = steps[next]) {
+            is PlayStep.Rest -> startRest(step.seconds)
+            is PlayStep.Work -> exerciseIndex = step.exerciseIndex
+        }
+    }
+
+    private fun landOnFirstUndone() {
+        stopRest()
+        val steps = playSteps()
+        val undone = steps.indexOfFirst { step ->
+            step is PlayStep.Work && !isSetDone(step.exerciseIndex, step.setIndex)
+        }
+        stepIndex = if (undone >= 0) undone else steps.size
+        val work = steps.getOrNull(stepIndex) as? PlayStep.Work
+        if (work != null) exerciseIndex = work.exerciseIndex
+    }
+
+    private fun stickToExercise() {
+        val steps = playSteps()
+        val current = steps.getOrNull(stepIndex) as? PlayStep.Work
+        val setsHere = sets.getOrNull(exerciseIndex)?.size ?: 0
+        if (current != null && current.exerciseIndex == exerciseIndex && current.setIndex < setsHere) return
+        val match = steps.indexOfFirst { step ->
+            step is PlayStep.Work &&
+                step.exerciseIndex == exerciseIndex &&
+                step.setIndex < setsHere &&
+                !isSetDone(step.exerciseIndex, step.setIndex)
+        }
+        if (match >= 0) {
+            stopRest()
+            stepIndex = match
+            return
+        }
+        landOnFirstUndone()
+    }
+
+    private fun isSetDone(exercise: Int, set: Int): Boolean =
+        sets.getOrNull(exercise)?.getOrNull(set)?.done == true
+
+    private fun readPlayMode(): PlayMode =
+        runCatching { PlayMode.valueOf(playPrefs.getString(PLAY_MODE, PlayMode.STRAIGHT.name).orEmpty()) }
+            .getOrDefault(PlayMode.STRAIGHT)
 
     private suspend fun loadHome(replaceStack: Boolean) {
         busy = true
@@ -577,10 +660,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         val loaded = gate.withLock { repository.savedSets(session.plan) }
         if (loaded.none { row -> row.any { it.done } }) return
         sets = loaded
-        val unfinished = loaded.indexOfFirst { row -> row.any { !it.done } }
-        exerciseIndex = if (unfinished >= 0) unfinished else loaded.lastIndex.coerceAtLeast(0)
         coachMessage = ""
         askRating = false
+        landOnFirstUndone()
         show(Screen.Player)
     }
 
@@ -722,6 +804,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 }
+
+private const val PLAY_MODE = "mode"
 
 internal fun trimKg(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
