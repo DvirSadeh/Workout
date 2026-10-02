@@ -35,6 +35,9 @@ object Planner {
     fun removeExercise(plan: SessionPlan, exerciseId: String): SessionPlan =
         WorkoutSize.remove(plan, exerciseId)
 
+    fun restoreExercise(plan: SessionPlan, planned: PlannedExercise, index: Int): SessionPlan =
+        WorkoutSize.restore(plan, planned, index)
+
     fun reorderSession(plan: SessionPlan, idsInOrder: List<String>): SessionPlan =
         WorkoutSize.reorder(plan, idsInOrder)
 

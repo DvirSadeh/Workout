@@ -369,6 +369,9 @@ class PlannerTest {
         assertEquals(listOf(plan.exercises[0], plan.exercises[2], plan.exercises[3]), removed.exercises)
         assertEquals(removed, Planner.removeExercise(removed, removed.exercises.first().exerciseId))
         assertEquals(plan, Planner.removeExercise(plan, "missing"))
+        val restored = Planner.restoreExercise(removed, plan.exercises[1], 1)
+        assertEquals(plan.exercises, restored.exercises)
+        assertEquals(plan, Planner.restoreExercise(plan, plan.exercises[1], 0))
     }
 
     @Test

@@ -8,6 +8,7 @@ import workout.domain.AdjustmentDirection
 import workout.domain.AdjustmentResult
 import workout.domain.Catalog
 import workout.domain.Planner
+import workout.domain.PlannedExercise
 import workout.domain.PlanSource
 import workout.domain.SessionPlan
 import workout.domain.SessionRating
@@ -187,6 +188,10 @@ class WorkoutRepository(
 
     suspend fun removeFromToday(exerciseId: String): SessionPlan? = editToday { plan, _, _, _ ->
         Planner.removeExercise(plan, exerciseId)
+    }
+
+    suspend fun restoreToToday(planned: PlannedExercise, index: Int): SessionPlan? = editToday { plan, _, _, _ ->
+        Planner.restoreExercise(plan, planned, index)
     }
 
     suspend fun reorderToday(idsInOrder: List<String>): SessionPlan? = editToday { plan, _, _, _ ->

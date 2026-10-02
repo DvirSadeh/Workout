@@ -44,6 +44,13 @@ object WorkoutSize {
         return plan.copy(exercises = next)
     }
 
+    fun restore(plan: SessionPlan, planned: PlannedExercise, index: Int): SessionPlan {
+        if (plan.exercises.any { it.exerciseId == planned.exerciseId }) return plan
+        val next = plan.exercises.toMutableList()
+        next.add(index.coerceIn(0, next.size), planned)
+        return plan.copy(exercises = next)
+    }
+
     fun additionChoices(plan: SessionPlan, profile: UserProfile, catalog: Catalog): List<ProgrammedExercise> {
         if (plan.exercises.size >= range(plan.focus).last) return emptyList()
         val used = plan.exercises.map { it.exerciseId }.toSet()
@@ -117,7 +124,7 @@ object WorkoutSize {
         return plan.copy(exercises = plan.exercises + added)
     }
 
-    private val muscleOrder = listOf(
+    val bodyAreas = listOf(
         "chest",
         "shoulders",
         "middle back",
@@ -132,9 +139,9 @@ object WorkoutSize {
     )
 
     private fun muscleRank(exercise: ProgrammedExercise): Int {
-        val muscle = exercise.primaryMuscles.firstOrNull()?.lowercase() ?: return muscleOrder.size
-        val index = muscleOrder.indexOf(muscle)
-        return if (index < 0) muscleOrder.size else index
+        val muscle = exercise.primaryMuscles.firstOrNull()?.lowercase() ?: return bodyAreas.size
+        val index = bodyAreas.indexOf(muscle)
+        return if (index < 0) bodyAreas.size else index
     }
 
     private fun loadFor(exercise: ProgrammedExercise, profile: UserProfile): Double? {

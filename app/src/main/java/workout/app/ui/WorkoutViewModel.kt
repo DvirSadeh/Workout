@@ -34,6 +34,7 @@ import workout.domain.SessionPlan
 import workout.domain.SessionRating
 import workout.domain.Sex
 import workout.domain.UserProfile
+import workout.domain.WorkoutSize
 import java.time.LocalDate
 
 sealed interface Screen {
@@ -62,6 +63,13 @@ data class ProfileForm(
     val apiKey: String = "",
 )
 
+data class PendingRemoval(
+    val name: String,
+    val planned: PlannedExercise,
+    val index: Int,
+    val sets: List<SetDraft>,
+)
+
 class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private val downloads = DownloadsBackup(app)
     private lateinit var repository: WorkoutRepository
@@ -71,6 +79,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private var setsDirty = false
     private var adjusting = false
     private var backupJob: Job? = null
+    private var undoJob: Job? = null
     private var stagedImport: String? = null
 
     val catalog = loadCatalog(app)
@@ -112,6 +121,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     var importReady by mutableStateOf(false)
         private set
     var todayPlanOpen by mutableStateOf(false)
+        private set
+    var pendingRemoval by mutableStateOf<PendingRemoval?>(null)
         private set
 
     init {
@@ -346,7 +357,60 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     fun addExercise(exerciseId: String) = changeToday { repository.addToToday(exerciseId) }
 
-    fun removeExercise(exerciseId: String) = changeToday { repository.removeFromToday(exerciseId) }
+    fun removeExercise(exerciseId: String) {
+        if (adjusting) return
+        val session = today ?: return
+        val index = session.plan.exercises.indexOfFirst { it.exerciseId == exerciseId }
+        if (index < 0) return
+        if (session.plan.exercises.size <= WorkoutSize.range(session.plan.focus).first) return
+        pendingRemoval = PendingRemoval(
+            name = catalog.find(exerciseId)?.name ?: exerciseId,
+            planned = session.plan.exercises[index],
+            index = index,
+            sets = sets.getOrNull(index).orEmpty(),
+        )
+        undoJob?.cancel()
+        undoJob = viewModelScope.launch {
+            delay(5_000)
+            pendingRemoval = null
+        }
+        changeToday { repository.removeFromToday(exerciseId) }
+    }
+
+    fun undoRemoval() {
+        val pending = pendingRemoval ?: return
+        pendingRemoval = null
+        undoJob?.cancel()
+        viewModelScope.launch {
+            gate.withLock {
+                val session = today ?: return@withLock
+                if (session.plan.exercises.any { it.exerciseId == pending.planned.exerciseId }) return@withLock
+                val edited = repository.restoreToToday(pending.planned, pending.index) ?: return@withLock
+                if (edited.exercises == session.plan.exercises) return@withLock
+                val realigned = realign(sets, session.plan, edited).toMutableList()
+                val slot = edited.exercises.indexOfFirst { it.exerciseId == pending.planned.exerciseId }
+                if (slot >= 0) {
+                    val planned = edited.exercises[slot]
+                    realigned[slot] = List(planned.sets) { setIndex ->
+                        pending.sets.getOrNull(setIndex)
+                            ?: SetDraft(planned.repsLow, planned.loadKg, done = false)
+                    }
+                }
+                val currentId = session.plan.exercises.getOrNull(exerciseIndex)?.exerciseId
+                today = session.copy(plan = edited)
+                sets = realigned
+                val kept = edited.exercises.indexOfFirst { it.exerciseId == currentId }
+                exerciseIndex = if (kept >= 0) {
+                    kept
+                } else {
+                    exerciseIndex.coerceIn(0, edited.exercises.lastIndex.coerceAtLeast(0))
+                }
+                setsDirty = false
+                repository.replaceSets(edited, realigned)
+            }
+            scheduleBackup()
+        }
+    }
 
     fun reorderToday(idsInOrder: List<String>) = changeToday { repository.reorderToday(idsInOrder) }
 
@@ -380,6 +444,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun resetToday() {
+        pendingRemoval = null
+        undoJob?.cancel()
         val session = today ?: return
         viewModelScope.launch {
             gate.withLock {
