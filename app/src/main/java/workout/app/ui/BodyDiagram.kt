@@ -1,31 +1,64 @@
 package workout.app.ui
 
+import android.content.Context
 import androidx.compose.foundation.Canvas
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import kotlin.math.min
+import org.json.JSONObject
 
 private val posteriorMuscles = setOf("middle back", "lower back", "glutes", "hamstrings", "triceps")
 private val anteriorMuscles = setOf("chest", "biceps", "abdominals", "quadriceps")
+
+private val groupsFor = mapOf(
+    "chest" to setOf("CHEST"),
+    "shoulders" to setOf("SHOULDERS_FRONT", "SHOULDERS_SIDE", "SHOULDERS_REAR"),
+    "middle back" to setOf("LATS", "RHOMBOIDS", "TRAPEZIUS"),
+    "biceps" to setOf("BICEPS"),
+    "triceps" to setOf("TRICEPS"),
+    "abdominals" to setOf("CORE", "OBLIQUES"),
+    "lower back" to setOf("BACK_LOWER"),
+    "glutes" to setOf("GLUTES"),
+    "quadriceps" to setOf("QUADS"),
+    "hamstrings" to setOf("HAMSTRINGS"),
+    "calves" to setOf("CALVES"),
+)
+
+private val bodyTop = Color(0xFF2A3524)
+private val bodyBottom = Color(0xFF141A12)
+private val idleTop = Color(0xFF5C6B50)
+private val idleBottom = Color(0xFF394232)
+private val seam = Color(0xFF10150E)
 
 @Composable
 fun BodyDiagram(
     muscles: List<String>,
     modifier: Modifier = Modifier,
     contentDescription: String? = null,
+    female: Boolean = false,
 ) {
     val names = muscles.map { it.lowercase() }.toSet()
     val back = names.any { it in posteriorMuscles } && names.none { it in anteriorMuscles }
+    val activeGroups = names.flatMap { groupsFor[it].orEmpty() }.toSet()
+    val context = LocalContext.current
+    val figure = remember(female, back) { MuscleFigures.load(context, female, back) }
     val active = MaterialTheme.colorScheme.primary
-    val idle = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
-    val ink = MaterialTheme.colorScheme.background
     Canvas(
         modifier.then(
             if (contentDescription.isNullOrBlank()) {
@@ -35,60 +68,93 @@ fun BodyDiagram(
             },
         ),
     ) {
-        fun marks(muscle: String) = muscle in names
-        limb(0.33f, 0.54f, 0.48f, 0.98f, idle)
-        limb(0.52f, 0.54f, 0.67f, 0.98f, idle)
-        limb(0.12f, 0.22f, 0.30f, 0.52f, idle)
-        limb(0.70f, 0.22f, 0.88f, 0.52f, idle)
-        limb(0.30f, 0.20f, 0.70f, 0.56f, idle)
-        limb(0.44f, 0.15f, 0.56f, 0.22f, idle)
-        drawCircle(idle, radius = size.height * 0.075f, center = Offset(size.width * 0.5f, size.height * 0.09f))
-        if (back) {
-            limb(0.47f, 0.24f, 0.53f, 0.50f, ink)
-            if (marks("middle back")) limb(0.34f, 0.24f, 0.66f, 0.40f, active)
-            if (marks("lower back")) limb(0.38f, 0.40f, 0.62f, 0.50f, active)
-            if (marks("glutes")) limb(0.32f, 0.50f, 0.68f, 0.64f, active)
-            if (marks("hamstrings")) {
-                limb(0.34f, 0.62f, 0.47f, 0.80f, active)
-                limb(0.53f, 0.62f, 0.66f, 0.80f, active)
+        if (figure.muscles.isNotEmpty()) {
+            val fitted = min(size.width / figure.width, size.height / figure.height)
+            val dx = (size.width - figure.width * fitted) / 2f
+            val dy = (size.height - figure.height * fitted) / 2f
+            translate(dx, dy) {
+                scale(fitted, fitted, pivot = Offset.Zero) {
+                    val body = Brush.verticalGradient(listOf(bodyTop, bodyBottom), startY = 0f, endY = figure.height)
+                    figure.outline.forEach { part -> drawPart(part, body, figure.centerX, separate = false) }
+                    val dim = figure.muscles.filter { it.group !in activeGroups }
+                    val lit = figure.muscles.filter { it.group in activeGroups }
+                    dim.forEach { part -> drawShaded(part, idleTop, idleBottom, figure.centerX) }
+                    lit.forEach { part -> drawShaded(part, lerp(active, Color.White, 0.18f), active, figure.centerX) }
+                }
             }
-            if (marks("triceps")) {
-                limb(0.14f, 0.24f, 0.28f, 0.40f, active)
-                limb(0.72f, 0.24f, 0.86f, 0.40f, active)
-            }
-        } else {
-            drawCircle(ink, radius = size.height * 0.012f, center = Offset(size.width * 0.44f, size.height * 0.085f))
-            drawCircle(ink, radius = size.height * 0.012f, center = Offset(size.width * 0.56f, size.height * 0.085f))
-            if (marks("chest")) {
-                limb(0.36f, 0.28f, 0.48f, 0.40f, active)
-                limb(0.52f, 0.28f, 0.64f, 0.40f, active)
-            }
-            if (marks("biceps")) {
-                limb(0.14f, 0.24f, 0.28f, 0.40f, active)
-                limb(0.72f, 0.24f, 0.86f, 0.40f, active)
-            }
-            if (marks("abdominals")) limb(0.40f, 0.40f, 0.60f, 0.54f, active)
-            if (marks("quadriceps")) {
-                limb(0.34f, 0.56f, 0.47f, 0.76f, active)
-                limb(0.53f, 0.56f, 0.66f, 0.76f, active)
-            }
-        }
-        if (marks("shoulders")) {
-            drawCircle(active, radius = size.height * 0.045f, center = Offset(size.width * 0.28f, size.height * 0.24f))
-            drawCircle(active, radius = size.height * 0.045f, center = Offset(size.width * 0.72f, size.height * 0.24f))
-        }
-        if (marks("calves")) {
-            limb(0.35f, 0.78f, 0.47f, 0.96f, active)
-            limb(0.53f, 0.78f, 0.65f, 0.96f, active)
         }
     }
 }
 
-private fun DrawScope.limb(left: Float, top: Float, right: Float, bottom: Float, color: Color) {
-    drawRoundRect(
-        color = color,
-        topLeft = Offset(left * size.width, top * size.height),
-        size = Size((right - left) * size.width, (bottom - top) * size.height),
-        cornerRadius = CornerRadius(size.minDimension * 0.12f),
+private fun DrawScope.drawShaded(part: MusclePart, top: Color, bottom: Color, centerX: Float) {
+    val bounds = part.path.getBounds()
+    val brush = Brush.verticalGradient(
+        0f to top,
+        0.55f to lerp(top, bottom, 0.45f),
+        1f to bottom,
+        startY = bounds.top,
+        endY = bounds.bottom.coerceAtLeast(bounds.top + 1f),
     )
+    drawPart(part, brush, centerX, separate = true)
 }
+
+private fun DrawScope.drawPart(part: MusclePart, brush: Brush, centerX: Float, separate: Boolean) {
+    drawOne(part.path, brush, separate)
+    if (part.side == "LEFT") {
+        withTransform({
+            scale(scaleX = -1f, scaleY = 1f, pivot = Offset(centerX, 0f))
+        }) {
+            drawOne(part.path, brush, separate)
+        }
+    }
+}
+
+private fun DrawScope.drawOne(path: Path, brush: Brush, separate: Boolean) {
+    drawPath(path, brush)
+    if (separate) drawPath(path, seam, style = Stroke(width = 4.5f))
+}
+
+private object MuscleFigures {
+    private val cache = HashMap<String, MuscleFigure>()
+
+    fun load(context: Context, female: Boolean, back: Boolean): MuscleFigure {
+        val sex = if (female) "female" else "male"
+        val view = if (back) "back" else "front"
+        val name = "musclemap/$sex-$view.json"
+        return synchronized(cache) {
+            cache.getOrPut(name) { parse(context, name) }
+        }
+    }
+
+    private fun parse(context: Context, name: String): MuscleFigure {
+        val text = context.assets.open(name).bufferedReader().use { it.readText() }
+        val json = JSONObject(text)
+        val outline = json.getJSONArray("outline")
+        val muscles = json.getJSONArray("muscles")
+        return MuscleFigure(
+            width = json.getDouble("w").toFloat(),
+            height = json.getDouble("h").toFloat(),
+            centerX = json.getDouble("cx").toFloat(),
+            outline = List(outline.length()) { index -> part(outline.getJSONObject(index), "") },
+            muscles = List(muscles.length()) { index ->
+                val item = muscles.getJSONObject(index)
+                part(item, item.getString("group"))
+            },
+        )
+    }
+
+    private fun part(item: JSONObject, group: String): MusclePart {
+        val parsed = runCatching { PathParser().parsePathString(item.getString("d")).toPath() }.getOrNull()
+        return MusclePart(group, item.optString("side", "CENTER"), parsed ?: Path())
+    }
+}
+
+private class MuscleFigure(
+    val width: Float,
+    val height: Float,
+    val centerX: Float,
+    val outline: List<MusclePart>,
+    val muscles: List<MusclePart>,
+)
+
+private class MusclePart(val group: String, val side: String, val path: Path)

@@ -658,6 +658,7 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
     if (addOpen && canAdd) {
         AddExerciseDialog(
             choices = choices,
+            female = profile?.sex == Sex.FEMALE,
             onDismiss = { addOpen = false },
             onPick = { exerciseId ->
                 addOpen = false
@@ -743,6 +744,7 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
                                 finished = finished,
                                 imagePath = exercise?.imageFiles?.firstOrNull(),
                                 muscles = exercise?.primaryMuscles.orEmpty(),
+                                female = profile?.sex == Sex.FEMALE,
                                 removeLabel = stringResource(R.string.remove_exercise, name),
                                 canRemove = canRemove,
                                 hidden = id == draggedId,
@@ -802,6 +804,7 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
                     finished = finished,
                     imagePath = exercise?.imageFiles?.firstOrNull(),
                     muscles = exercise?.primaryMuscles.orEmpty(),
+                    female = profile?.sex == Sex.FEMALE,
                     removeLabel = "",
                     canRemove = false,
                     hidden = false,
@@ -911,6 +914,7 @@ private fun ExerciseRow(
     finished: Boolean,
     imagePath: String?,
     muscles: List<String>,
+    female: Boolean,
     removeLabel: String,
     canRemove: Boolean,
     hidden: Boolean,
@@ -980,7 +984,8 @@ private fun ExerciseRow(
             ExerciseThumb(imagePath, Modifier.size(64.dp))
             BodyDiagram(
                 muscles = muscles,
-                modifier = Modifier.size(width = 44.dp, height = 72.dp),
+                female = female,
+                modifier = Modifier.size(width = 52.dp, height = 80.dp),
                 contentDescription = muscleNote,
             )
         }
@@ -1123,6 +1128,7 @@ private fun RemovalUndo(name: String, fraction: Float, onUndo: () -> Unit) {
 @Composable
 private fun AddExerciseDialog(
     choices: List<ProgrammedExercise>,
+    female: Boolean,
     onDismiss: () -> Unit,
     onPick: (String) -> Unit,
 ) {
@@ -1169,7 +1175,8 @@ private fun AddExerciseDialog(
                         ) {
                             BodyDiagram(
                                 muscles = listOf(muscle),
-                                modifier = Modifier.size(width = 36.dp, height = 60.dp),
+                                female = female,
+                                modifier = Modifier.size(width = 40.dp, height = 64.dp),
                                 contentDescription = label,
                             )
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1209,7 +1216,8 @@ private fun AddExerciseDialog(
                             ExerciseThumb(exercise.imageFiles.firstOrNull(), Modifier.size(48.dp))
                             BodyDiagram(
                                 muscles = exercise.primaryMuscles,
-                                modifier = Modifier.size(width = 36.dp, height = 60.dp),
+                                female = female,
+                                modifier = Modifier.size(width = 40.dp, height = 64.dp),
                                 contentDescription = if (muscles.isBlank()) {
                                     null
                                 } else {
