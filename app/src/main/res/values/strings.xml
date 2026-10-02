@@ -77,6 +77,8 @@
     <string name="how_to_title">How to do it</string>
     <string name="easier_versions">Easier versions</string>
     <string name="harder_versions">Harder versions</string>
+    <string name="easier_side">← Easier</string>
+    <string name="harder_side">Harder →</string>
     <string name="use_this_today">Use this today</string>
     <string name="todays_version">This is today\'s version</string>
     <string name="version_today">Today</string>

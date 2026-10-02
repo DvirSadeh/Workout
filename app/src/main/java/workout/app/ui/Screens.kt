@@ -1595,11 +1595,38 @@ private fun HardnessChooser(model: WorkoutViewModel, exercise: ProgrammedExercis
     key(exercise.familyId) {
         VersionStrip(model, exercise.id, todayExercise.id, versions)
     }
-    if (exercise.id != todayExercise.id) {
-        Button(
-            onClick = { model.useThisToday(exercise.id) },
-            modifier = Modifier.fillMaxWidth(),
+    VersionAction(
+        isToday = exercise.id == todayExercise.id,
+        onUse = { model.useThisToday(exercise.id) },
+    )
+}
+
+@Composable
+private fun VersionAction(isToday: Boolean, onUse: () -> Unit) {
+    if (isToday) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
             shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    stringResource(R.string.todays_version),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+    } else {
+        Button(
+            onClick = onUse,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(12.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
         ) {
             Text(stringResource(R.string.use_this_today))
         }
@@ -1617,34 +1644,64 @@ private fun VersionStrip(
     val pagerState = rememberPagerState(initialPage = start, pageCount = { versions.size })
     val scope = rememberCoroutineScope()
     val pageWidth = 200.dp
+    val todayTier = versions.firstOrNull { it.id == todayId }?.tier
     LaunchedEffect(pagerState.settledPage) {
         val chosen = versions.getOrNull(pagerState.settledPage)
         if (chosen != null && chosen.id != viewingId) model.openExercise(chosen.id)
     }
-    BoxWithConstraints(Modifier.fillMaxWidth().height(96.dp)) {
-        val side = ((maxWidth - pageWidth) / 2).coerceAtLeast(0.dp)
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = side),
-            pageSize = PageSize.Fixed(pageWidth),
-            pageSpacing = 8.dp,
-            snapPosition = SnapPosition.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) { page ->
-            val version = versions[page]
-            VersionChip(
-                name = version.name,
-                today = version.id == todayId,
-                viewing = page == pagerState.currentPage,
-                onSelect = { scope.launch { pagerState.animateScrollToPage(page) } },
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.easier_side),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
             )
+            Spacer(Modifier.weight(1f))
+            Text(
+                stringResource(R.string.harder_side),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        BoxWithConstraints(Modifier.fillMaxWidth().height(96.dp)) {
+            val side = ((maxWidth - pageWidth) / 2).coerceAtLeast(0.dp)
+            HorizontalPager(
+                state = pagerState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = side),
+                pageSize = PageSize.Fixed(pageWidth),
+                pageSpacing = 8.dp,
+                snapPosition = SnapPosition.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) { page ->
+                val version = versions[page]
+                val caption = when {
+                    version.id == todayId -> stringResource(R.string.version_today)
+                    todayTier != null && version.tier < todayTier -> stringResource(R.string.easier)
+                    else -> stringResource(R.string.harder)
+                }
+                VersionChip(
+                    name = version.name,
+                    caption = caption,
+                    today = version.id == todayId,
+                    viewing = page == pagerState.currentPage,
+                    onSelect = { scope.launch { pagerState.animateScrollToPage(page) } },
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun VersionChip(name: String, today: Boolean, viewing: Boolean, onSelect: () -> Unit) {
+private fun VersionChip(
+    name: String,
+    caption: String,
+    today: Boolean,
+    viewing: Boolean,
+    onSelect: () -> Unit,
+) {
     val background = when {
         viewing -> MaterialTheme.colorScheme.primary
         today -> MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
@@ -1663,10 +1720,12 @@ private fun VersionChip(name: String, today: Boolean, viewing: Boolean, onSelect
             verticalArrangement = Arrangement.Center,
         ) {
             Text(
-                if (today) stringResource(R.string.version_today) else "",
+                caption,
                 modifier = Modifier.height(20.dp),
                 color = if (viewing) foreground else MaterialTheme.colorScheme.primary,
                 style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 name,
