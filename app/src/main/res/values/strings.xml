@@ -132,4 +132,6 @@
     <string name="see_all">See all</string>
     <string name="next_exercise">Next · %1$s</string>
     <string name="skipping_limits">Skipping %1$s</string>
+    <string name="caution">Caution</string>
+    <string name="got_it">Got it</string>
 </resources>

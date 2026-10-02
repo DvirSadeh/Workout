@@ -7,6 +7,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,7 +28,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -42,19 +47,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -70,9 +80,11 @@ import workout.domain.LimitTag
 import workout.domain.LoadType
 import workout.domain.SessionRating
 import workout.domain.Sex
+import workout.domain.UserProfile
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.format.TextStyle
 import java.util.Locale
 import kotlin.math.abs
 
@@ -210,30 +222,64 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                 Modifier.padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                Text(
-                    focusLabel(plan.focus),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    if (plan.deload) {
-                        stringResource(R.string.recovery_week_label)
-                    } else {
-                        stringResource(R.string.week_number, plan.weekInBlock + 1)
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                WeekBars(plan.weekInBlock)
-                Text(
-                    stringResource(R.string.session_meta, model.profile?.minutesPerSession ?: 0, plan.exercises.size),
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (session.headline.isNotBlank()) {
-                    Text(session.headline, color = MaterialTheme.colorScheme.secondary)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            focusLabel(plan.focus),
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            stringResource(
+                                R.string.session_meta,
+                                model.profile?.minutesPerSession ?: 0,
+                                plan.exercises.size,
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (session.headline.isNotBlank()) CautionMark(session.headline)
                 }
-                if (plan.note.isNotBlank()) Text(plan.note)
-                if (model.firstSession) {
-                    Text(stringResource(R.string.first_session_hint), style = MaterialTheme.typography.bodySmall)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    plan.exercises.forEachIndexed { index, planned ->
+                        val exercise = model.catalog.find(planned.exerciseId)
+                        val name = exercise?.name ?: planned.exerciseId
+                        val row = model.sets.getOrNull(index).orEmpty()
+                        val finished = row.isNotEmpty() && row.all { it.done }
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { model.openExercise(planned.exerciseId) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(name, style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        stringResource(R.string.prescription, planned.sets, prescription(planned)) +
+                                            loadSuffix(planned.loadKg, exercise?.loadType),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
+                                if (finished) {
+                                    Text(
+                                        stringResource(R.string.done),
+                                        color = MaterialTheme.colorScheme.primary,
+                                        style = MaterialTheme.typography.labelLarge,
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
                 if (session.completed) {
                     val rating = session.rating?.let { ratingLabel(it) } ?: ""
@@ -260,7 +306,10 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                         drawStopIndicator = {},
                     )
                     if (nextName != null) {
-                        Text(stringResource(R.string.next_exercise, nextName), style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            stringResource(R.string.next_exercise, nextName),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
                     }
                 }
                 Button(
@@ -277,6 +326,19 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
     }
 
     model.profile?.let { profile ->
+        val weekStart = today.with(DayOfWeek.MONDAY)
+        val doneThisWeek = model.history.count { entry ->
+            !entry.date.isBefore(weekStart) && !entry.date.isAfter(today)
+        }
+        CalendarCard(
+            profile = profile,
+            blockIndex = plan.blockIndex,
+            weekInBlock = plan.weekInBlock,
+            deload = plan.deload,
+            today = today,
+            trained = model.history.map { it.date }.toSet(),
+            doneThisWeek = doneThisWeek,
+        )
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
@@ -311,72 +373,6 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                 ) {
                     Text(stringResource(R.string.edit_plan))
                 }
-            }
-        }
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.todays_exercises), style = MaterialTheme.typography.titleMedium)
-        plan.exercises.forEachIndexed { index, planned ->
-            val name = model.catalog.find(planned.exerciseId)?.name ?: planned.exerciseId
-            val row = model.sets.getOrNull(index).orEmpty()
-            val finished = row.isNotEmpty() && row.all { it.done }
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { model.openExercise(planned.exerciseId) },
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface,
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(name, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            stringResource(R.string.prescription, planned.sets, prescription(planned)) +
-                                loadSuffix(planned.loadKg, model.catalog.find(planned.exerciseId)?.loadType),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Text(
-                        stringResource(if (finished) R.string.done else if (planned.anchor) R.string.main_lift_badge else R.string.how_to),
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                }
-            }
-        }
-    }
-
-    model.profile?.let { profile ->
-        val weekStart = today.with(DayOfWeek.MONDAY)
-        val doneThisWeek = model.history.count { entry ->
-            !entry.date.isBefore(weekStart) && !entry.date.isAfter(today)
-        }
-        val target = profile.daysPerWeek.coerceAtLeast(1)
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text(stringResource(R.string.this_week), style = MaterialTheme.typography.titleMedium)
-                Text(stringResource(R.string.week_sessions, doneThisWeek, target))
-                LinearProgressIndicator(
-                    progress = { (doneThisWeek.toFloat() / target.toFloat()).coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(8.dp)
-                        .clip(RoundedCornerShape(99.dp)),
-                    color = MaterialTheme.colorScheme.primary,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                    gapSize = 0.dp,
-                    drawStopIndicator = {},
-                )
             }
         }
     }
@@ -464,6 +460,145 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+@Composable
+private fun CautionMark(message: String) {
+    var open by remember { mutableStateOf(false) }
+    val label = stringResource(R.string.caution)
+    Box(
+        Modifier
+            .size(40.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF3A3218))
+            .clickable { open = true }
+            .semantics { contentDescription = label },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            "!",
+            color = Color(0xFFF0C14D),
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+        )
+    }
+    if (open) {
+        AlertDialog(
+            onDismissRequest = { open = false },
+            confirmButton = {
+                TextButton(onClick = { open = false }) { Text(stringResource(R.string.got_it)) }
+            },
+            title = { Text(label) },
+            text = { Text(message) },
+        )
+    }
+}
+
+@Composable
+private fun CalendarCard(
+    profile: UserProfile,
+    blockIndex: Int,
+    weekInBlock: Int,
+    deload: Boolean,
+    today: LocalDate,
+    trained: Set<LocalDate>,
+    doneThisWeek: Int,
+) {
+    val blockStart = profile.trainingStart.plusDays(blockIndex.toLong() * 28)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val blockEnd = blockStart.plusDays(27)
+            val monthPattern = DateTimeFormatter.ofPattern("MMMM", Locale.ENGLISH)
+            val months = if (blockStart.month == blockEnd.month) {
+                blockStart.format(monthPattern)
+            } else {
+                "${blockStart.format(monthPattern)} – ${blockEnd.format(monthPattern)}"
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (deload) {
+                        stringResource(R.string.recovery_week_label)
+                    } else {
+                        stringResource(R.string.week_number, weekInBlock + 1)
+                    },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(months, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            WeekBars(weekInBlock)
+            Row {
+                repeat(7) { offset ->
+                    val label = blockStart.plusDays(offset.toLong()).dayOfWeek
+                        .getDisplayName(TextStyle.SHORT, Locale.ENGLISH)
+                        .take(2)
+                    Text(
+                        label,
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+            repeat(4) { week ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (week == weekInBlock) {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            } else {
+                                Color.Transparent
+                            },
+                        ),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    repeat(7) { day ->
+                        val date = blockStart.plusDays(week * 7L + day)
+                        DayCell(date, isToday = date == today, trained = date in trained)
+                    }
+                }
+            }
+            Text(
+                stringResource(R.string.week_sessions, doneThisWeek, profile.daysPerWeek.coerceAtLeast(1)),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun RowScope.DayCell(date: LocalDate, isToday: Boolean, trained: Boolean) {
+    Box(
+        Modifier
+            .weight(1f)
+            .height(36.dp)
+            .padding(3.dp)
+            .then(
+                if (isToday) {
+                    Modifier.border(2.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                } else {
+                    Modifier
+                },
+            )
+            .background(
+                if (trained) MaterialTheme.colorScheme.primary else Color.Transparent,
+                CircleShape,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            date.dayOfMonth.toString(),
+            color = if (trained) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.labelMedium,
+        )
+    }
 }
 
 @Composable
