@@ -59,6 +59,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -108,6 +109,7 @@ fun WorkoutApp(model: WorkoutViewModel) {
         Screen.Home -> HomeScreen(model)
         Screen.Player -> PlayerScreen(model)
         Screen.History -> HistoryScreen(model)
+        is Screen.PastSession -> PastSessionScreen(model, screen.date)
         Screen.Profile -> ProfileScreen(model, onboarding = false, import)
         is Screen.Exercise -> ExerciseScreen(model, screen.id)
     }
@@ -140,7 +142,7 @@ private fun HomeScreen(model: WorkoutViewModel) {
     val dateText = remember(today) {
         today.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.ENGLISH))
     }
-    Scaffold { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
@@ -244,40 +246,26 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                     if (session.headline.isNotBlank()) CautionMark(session.headline)
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    plan.exercises.forEachIndexed { index, planned ->
-                        val exercise = model.catalog.find(planned.exerciseId)
-                        val name = exercise?.name ?: planned.exerciseId
-                        val row = model.sets.getOrNull(index).orEmpty()
-                        val finished = row.isNotEmpty() && row.all { it.done }
-                        Surface(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { model.openExercise(planned.exerciseId) },
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
+                    plan.exercises.withIndex().chunked(2).forEach { pair ->
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Row(
-                                Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                    Text(name, style = MaterialTheme.typography.titleSmall)
-                                    Text(
-                                        stringResource(R.string.prescription, planned.sets, prescription(planned)) +
-                                            loadSuffix(planned.loadKg, exercise?.loadType),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
+                            pair.forEach { (index, planned) ->
+                                val exercise = model.catalog.find(planned.exerciseId)
+                                val finished = model.sets.getOrNull(index).orEmpty().let { row ->
+                                    row.isNotEmpty() && row.all { it.done }
                                 }
-                                if (finished) {
-                                    Text(
-                                        stringResource(R.string.done),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        style = MaterialTheme.typography.labelLarge,
-                                    )
-                                }
+                                SessionTile(
+                                    name = exercise?.name ?: planned.exerciseId,
+                                    detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
+                                        loadSuffix(planned.loadKg, exercise?.loadType),
+                                    finished = finished,
+                                    onClick = { model.openExercise(planned.exerciseId) },
+                                    modifier = Modifier.weight(1f),
+                                )
                             }
+                            if (pair.size == 1) Spacer(Modifier.weight(1f))
                         }
                     }
                 }
@@ -338,11 +326,12 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
             today = today,
             trained = model.history.map { it.date }.toSet(),
             doneThisWeek = doneThisWeek,
+            onOpenDay = model::openPastSession,
         )
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
+            color = MaterialTheme.colorScheme.surface,
         ) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.your_plan), style = MaterialTheme.typography.titleMedium)
@@ -372,44 +361,6 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                     shape = RoundedCornerShape(16.dp),
                 ) {
                     Text(stringResource(R.string.edit_plan))
-                }
-            }
-        }
-    }
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                stringResource(R.string.recent_workouts),
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-            )
-            TextButton(onClick = model::openHistory) { Text(stringResource(R.string.see_all)) }
-        }
-        if (model.history.isEmpty()) {
-            Text(stringResource(R.string.history_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            model.history.take(3).forEach { entry ->
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(onClick = model::openHistory),
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            entry.date.format(DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)),
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        entry.rating?.let {
-                            Text(ratingLabel(it), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
                 }
             }
         }
@@ -503,6 +454,7 @@ private fun CalendarCard(
     today: LocalDate,
     trained: Set<LocalDate>,
     doneThisWeek: Int,
+    onOpenDay: (LocalDate) -> Unit,
 ) {
     val blockStart = profile.trainingStart.plusDays(blockIndex.toLong() * 28)
     Surface(
@@ -561,7 +513,17 @@ private fun CalendarCard(
                 ) {
                     repeat(7) { day ->
                         val date = blockStart.plusDays(week * 7L + day)
-                        DayCell(date, isToday = date == today, trained = date in trained)
+                        val hasWorkout = date in trained
+                        DayCell(
+                            date = date,
+                            isToday = date == today,
+                            trained = hasWorkout,
+                            onOpen = if (hasWorkout) {
+                                { onOpenDay(date) }
+                            } else {
+                                null
+                            },
+                        )
                     }
                 }
             }
@@ -574,11 +536,59 @@ private fun CalendarCard(
 }
 
 @Composable
-private fun RowScope.DayCell(date: LocalDate, isToday: Boolean, trained: Boolean) {
+private fun SessionTile(
+    name: String,
+    detail: String,
+    finished: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(
+            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                name,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleSmall,
+            )
+            Text(
+                detail,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (finished) {
+                Text(
+                    stringResource(R.string.done),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RowScope.DayCell(
+    date: LocalDate,
+    isToday: Boolean,
+    trained: Boolean,
+    onOpen: (() -> Unit)?,
+) {
     Box(
         Modifier
             .weight(1f)
-            .height(36.dp)
+            .height(40.dp)
+            .then(if (onOpen != null) Modifier.clickable(onClick = onOpen) else Modifier)
             .padding(3.dp)
             .then(
                 if (isToday) {
@@ -634,7 +644,7 @@ private fun PlayerScreen(model: WorkoutViewModel) {
     val planned = plan.exercises[index]
     val exercise = model.catalog.find(planned.exerciseId)
     val row = model.sets.getOrNull(index).orEmpty()
-    Scaffold { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(
             Modifier
                 .fillMaxSize()
@@ -752,6 +762,22 @@ private fun DumbbellPicker(owned: List<Double>, selected: Double?, onSelect: (Do
             } else {
                 OutlinedButton(onClick = { onSelect(kilograms) }) { Text("${trimKg(kilograms)} kg") }
             }
+        }
+    }
+}
+
+@Composable
+private fun PastSessionScreen(model: WorkoutViewModel, date: LocalDate) {
+    val entry = model.history.find { it.date == date }
+    val title = date.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.ENGLISH))
+    ScreenFrame(title = title, onBack = model::back) {
+        if (entry == null) return@ScreenFrame
+        entry.rating?.let {
+            Text(ratingLabel(it), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleMedium)
+        }
+        if (entry.note.isNotBlank()) Text(entry.note)
+        entry.lines.forEach { line ->
+            Text(line, style = MaterialTheme.typography.bodyLarge)
         }
     }
 }
@@ -958,7 +984,7 @@ private fun ScreenFrame(
     onBack: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Scaffold { padding ->
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
         Column(
             Modifier
                 .fillMaxSize()

@@ -168,9 +168,17 @@ class WorkoutRepository(
                 lines = record.exercises.map { logged ->
                     val name = catalog.find(logged.exerciseId)?.name ?: logged.exerciseId
                     val done = logged.sets.filter { it.completed }
-                    val reps = done.maxOfOrNull { it.reps } ?: 0
                     val load = logged.prescribedLoadKg?.let { " · ${trim(it)} kg" } ?: ""
-                    "$name$load × $reps"
+                    if (done.isEmpty()) {
+                        val reps = if (logged.repsLow == logged.repsHigh) {
+                            logged.repsLow.toString()
+                        } else {
+                            "${logged.repsLow}–${logged.repsHigh}"
+                        }
+                        "$name$load · ${logged.prescribedSets} × $reps"
+                    } else {
+                        "$name$load × ${done.maxOf { it.reps }}"
+                    }
                 },
             )
         }

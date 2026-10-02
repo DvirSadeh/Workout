@@ -1,8 +1,8 @@
 <resources>
     <style name="Theme.Workout" parent="android:Theme.Material.NoActionBar">
-        <item name="android:statusBarColor">#121410</item>
-        <item name="android:navigationBarColor">#121410</item>
-        <item name="android:windowBackground">#121410</item>
+        <item name="android:statusBarColor">#0B0D0A</item>
+        <item name="android:navigationBarColor">#0B0D0A</item>
+        <item name="android:windowBackground">#0B0D0A</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
 </resources>

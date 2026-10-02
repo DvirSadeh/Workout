@@ -42,6 +42,7 @@ sealed interface Screen {
     data object Home : Screen
     data object Player : Screen
     data object History : Screen
+    data class PastSession(val date: LocalDate) : Screen
     data object Profile : Screen
     data class Exercise(val id: String) : Screen
 }
@@ -207,6 +208,11 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
             history = repository.history()
             show(Screen.History)
         }
+    }
+
+    fun openPastSession(date: LocalDate) {
+        if (history.none { it.date == date }) return
+        show(Screen.PastSession(date))
     }
 
     fun openPlayer() {
