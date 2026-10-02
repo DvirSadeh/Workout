@@ -1,5 +1,7 @@
 package workout.domain
 
+import kotlin.math.abs
+
 object Adjustments {
     fun apply(
         plan: SessionPlan,
@@ -100,5 +102,69 @@ object Adjustments {
             loadKg = load,
             repsHigh = planned.repsLow,
         )
+    }
+
+    fun adopt(
+        plan: SessionPlan,
+        catalog: Catalog,
+        profile: UserProfile,
+        chosenExerciseId: String,
+    ): AdjustmentResult {
+        val chosen = catalog.find(chosenExerciseId)
+            ?: return AdjustmentResult(plan, emptyList(), "That exercise is not in the catalog.")
+        if (plan.exercises.any { it.exerciseId == chosen.id }) {
+            return AdjustmentResult(plan, emptyList(), "${chosen.name} is already in today's workout.")
+        }
+        if (chosen.needsBench && !profile.hasBench) {
+            return AdjustmentResult(plan, emptyList(), "${chosen.name} needs a bench.")
+        }
+        if (chosen.excludedBy.any { it in profile.limits }) {
+            return AdjustmentResult(plan, emptyList(), "${chosen.name} is turned off for this plan.")
+        }
+        if (chosen.loadType == LoadType.DUMBBELL && profile.dumbbellKg.isEmpty()) {
+            return AdjustmentResult(plan, emptyList(), "${chosen.name} needs a dumbbell.")
+        }
+        val candidates = plan.exercises.indices.filter { index ->
+            catalog.find(plan.exercises[index].exerciseId)?.familyId == chosen.familyId
+        }
+        if (candidates.isEmpty()) {
+            return AdjustmentResult(plan, emptyList(), "That movement is not in today's workout.")
+        }
+        val target = candidates.minWith(
+            compareBy(
+                { if (plan.exercises[it].anchor) 0 else 1 },
+                { abs((catalog.find(plan.exercises[it].exerciseId)?.tier ?: 0) - chosen.tier) },
+                { it },
+            ),
+        )
+        val current = plan.exercises[target]
+        val updated = current.copy(
+            exerciseId = chosen.id,
+            loadKg = loadForVersion(current, chosen, profile),
+            reason = "You chose this version for today.",
+        )
+        val exercises = plan.exercises.toMutableList()
+        exercises[target] = updated
+        return AdjustmentResult(
+            plan.copy(exercises = exercises),
+            listOf(AdjustmentRecord(chosen.id, chosen.familyId, AdjustmentDirection.CHOSEN)),
+            "Using ${chosen.name} today.",
+        )
+    }
+
+    private fun loadForVersion(
+        planned: PlannedExercise,
+        chosen: ProgrammedExercise,
+        profile: UserProfile,
+    ): Double? {
+        if (chosen.loadType == LoadType.BODYWEIGHT) return null
+        val owned = Training.sortedOwned(profile)
+        if (owned.isEmpty()) return null
+        val current = planned.loadKg
+        return if (current == null) {
+            Training.initialLoad(chosen.pattern, profile) ?: owned.first()
+        } else {
+            Training.roundDown(owned, current) ?: owned.first()
+        }
     }
 }

@@ -57,8 +57,12 @@ object Signals {
             for (logged in session.exercises) {
                 if (!logged.anchor) continue
                 val exercise = catalog.find(logged.exerciseId) ?: continue
-                if (exercise.pattern !in found) {
-                    found[exercise.pattern] = AnchorLock(exercise.pattern, exercise.id, exercise.familyId)
+                val lock = AnchorLock(exercise.pattern, exercise.id, exercise.familyId)
+                val choseThis = session.adjustments.any {
+                    it.direction == AdjustmentDirection.CHOSEN && it.exerciseId == exercise.id
+                }
+                if (exercise.pattern !in found || choseThis) {
+                    found[exercise.pattern] = lock
                 }
             }
         }

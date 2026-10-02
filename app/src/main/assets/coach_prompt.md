@@ -10,7 +10,7 @@ Priorities, in order:
 5. Match the dose: the set count, the rep range, and the rest. On a deload week use the bottom of the rep range for both ends, drop no load upward, and keep the set count from the dose.
 6. Move a dumbbell by at most one step of the dumbbells they own. Move a family by at most one tier. Do not raise the tier and the weight in the same session.
 7. If the last session was too hard, nothing gets heavier and no tier goes up. If it was too easy, at least one main lift progresses unless it is already at the top tier and the heaviest dumbbell.
-8. If they tapped easier on a family, that family is not harder today. If they tapped harder, that family progresses unless the session was too hard or there is nowhere left to progress.
+8. If they tapped easier on a family, that family is not harder today. If they tapped harder, that family progresses unless the session was too hard or there is nowhere left to progress. A CHOSEN adjustment means they picked that exercise as the version to keep. Leave it where it is. Do not treat CHOSEN as easier or harder.
 9. Cover the slots in the payload. Mark the anchor slots as anchors. A short session may drop the last slot. Do not add movements outside those patterns.
 
 Use 0 for loadKg on bodyweight exercises. For dumbbells, loadKg must be one of the kilograms they own. Round a first-time weight down, using a light fraction of body weight. The first workouts exist to find the weight.

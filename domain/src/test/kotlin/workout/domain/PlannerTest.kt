@@ -263,6 +263,64 @@ class PlannerTest {
     }
 
     @Test
+    fun choosingAVersionReplacesOnlyThatExercise() {
+        val profile = profile()
+        val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        assertEquals("Bodyweight_Squat", plan.exercises.first { it.anchor && catalog.require(it.exerciseId).pattern == MovementPattern.SQUAT }.exerciseId)
+        val result = Planner.adoptVersion(plan, catalog, profile, "Dumbbell_Squat")
+        val squat = result.plan.exercises.first { it.exerciseId == "Dumbbell_Squat" }
+        assertEquals(1, result.adjustments.size)
+        assertEquals(AdjustmentDirection.CHOSEN, result.adjustments.single().direction)
+        assertEquals("squat", result.adjustments.single().familyId)
+        assertTrue(squat.loadKg != null && squat.loadKg in profile.dumbbellKg)
+        assertEquals(1, result.plan.exercises.countIndexed { index, exercise -> exercise != plan.exercises[index] })
+
+        val heavier = Planner.adoptVersion(result.plan, catalog, profile, "Plie_Dumbbell_Squat")
+        assertEquals(squat.loadKg, heavier.plan.exercises.first { it.exerciseId == "Plie_Dumbbell_Squat" }.loadKg)
+
+        val back = Planner.adoptVersion(heavier.plan, catalog, profile, "Bodyweight_Squat")
+        assertNull(back.plan.exercises.first { it.exerciseId == "Bodyweight_Squat" }.loadKg)
+    }
+
+    @Test
+    fun choosingAVersionThePlanCannotDoIsRefused() {
+        val profile = profile(bench = false)
+        val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        val bench = Planner.adoptVersion(plan, catalog, profile, "Dumbbell_Bench_Press")
+        assertTrue(bench.adjustments.isEmpty())
+        assertEquals(plan, bench.plan)
+
+        val limited = Planner.adoptVersion(plan, catalog, profile.copy(limits = setOf(LimitTag.WRISTS)), "Pushups")
+        assertTrue(limited.adjustments.isEmpty())
+        assertEquals(plan, limited.plan)
+
+        val other = Planner.adoptVersion(plan, catalog, profile, "Hammer_Curls")
+        assertTrue(other.adjustments.isEmpty())
+        assertEquals(plan, other.plan)
+    }
+
+    @Test
+    fun aChosenVersionStaysTheMainLiftForTheBlock() {
+        val profile = profile()
+        val first = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        val firstDone = record(first, SessionRating.JUST_RIGHT)
+        val secondDay = start.plusDays(2)
+        val second = Planner.fallbackPlan(profile, catalog, listOf(firstDone), secondDay)
+        assertEquals("Bodyweight_Squat", second.exercises.first { it.anchor && catalog.require(it.exerciseId).pattern == MovementPattern.SQUAT }.exerciseId)
+        val chosen = Planner.adoptVersion(second, catalog, profile, "Dumbbell_Squat")
+        val secondDone = record(chosen.plan, SessionRating.JUST_RIGHT).copy(adjustments = chosen.adjustments)
+        val history = listOf(firstDone, secondDone)
+        val thirdDay = start.plusDays(4)
+        val third = Planner.fallbackPlan(profile, catalog, history, thirdDay)
+        assertEquals("Dumbbell_Squat", third.exercises.first { it.anchor && catalog.require(it.exerciseId).pattern == MovementPattern.SQUAT }.exerciseId)
+        assertClean(third, profile, history, thirdDay)
+        val fourthDay = start.plusDays(6)
+        val fourth = Planner.fallbackPlan(profile, catalog, history + record(third, SessionRating.JUST_RIGHT), fourthDay)
+        assertEquals("Dumbbell_Squat", fourth.exercises.first { it.anchor && catalog.require(it.exerciseId).pattern == MovementPattern.SQUAT }.exerciseId)
+        assertClean(fourth, profile, history + record(third, SessionRating.JUST_RIGHT), fourthDay)
+    }
+
+    @Test
     fun harderLeavesTheRestOfTheSessionAlone() {
         val profile = profile(minutes = 60)
         val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)

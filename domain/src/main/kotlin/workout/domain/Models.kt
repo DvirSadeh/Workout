@@ -25,7 +25,7 @@ enum class LoadType { DUMBBELL, BODYWEIGHT }
 
 enum class SessionRating { TOO_EASY, JUST_RIGHT, HARD_BUT_GOOD, TOO_HARD }
 
-enum class AdjustmentDirection { EASIER, HARDER }
+enum class AdjustmentDirection { EASIER, HARDER, CHOSEN }
 
 enum class PlanSource { COACH, FALLBACK }
 

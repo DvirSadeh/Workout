@@ -18,6 +18,13 @@ object Planner {
         today: LocalDate,
     ): SessionPlan = Fallback.plan(profile, catalog, history, today)
 
+    fun adoptVersion(
+        plan: SessionPlan,
+        catalog: Catalog,
+        profile: UserProfile,
+        chosenExerciseId: String,
+    ): AdjustmentResult = Adjustments.adopt(plan, catalog, profile, chosenExerciseId)
+
     fun applyAdjustment(
         plan: SessionPlan,
         catalog: Catalog,

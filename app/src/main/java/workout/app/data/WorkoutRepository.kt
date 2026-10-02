@@ -128,6 +128,29 @@ class WorkoutRepository(
         result
     }
 
+    suspend fun adoptVersion(chosenExerciseId: String): AdjustmentResult = withContext(Dispatchers.IO) {
+        val profile = dao.profile()?.toProfile() ?: error("Profile missing")
+        val today = LocalDate.now().toString()
+        val entity = dao.session(today) ?: error("No session")
+        val plan = parsePlan(entity.planJson)
+        val result = Planner.adoptVersion(plan, catalog, profile, chosenExerciseId)
+        if (result.adjustments.isEmpty()) return@withContext result
+        dao.saveSession(entity.copy(planJson = result.plan.toJson()))
+        val families = result.adjustments.map { it.familyId }.toSet()
+        val kept = dao.adjustments(today).filter { it.familyId !in families }
+        dao.deleteAdjustments(today)
+        val rows = kept + result.adjustments.map {
+            AdjustmentEntity(
+                date = today,
+                exerciseId = it.exerciseId,
+                familyId = it.familyId,
+                direction = it.direction.name,
+            )
+        }
+        if (rows.isNotEmpty()) dao.saveAdjustments(rows)
+        result
+    }
+
     suspend fun replaceSets(plan: SessionPlan, drafts: List<List<SetDraft>>) = withContext(Dispatchers.IO) {
         val date = plan.date.toString()
         dao.deleteSets(date)

@@ -803,6 +803,28 @@ private fun ExerciseScreen(model: WorkoutViewModel, id: String) {
     val exercise = model.catalog.find(id)
     ScreenFrame(title = exercise?.name ?: id, onBack = model::back) {
         if (exercise == null) return@ScreenFrame
+        val session = model.today
+        val inToday = session?.plan?.exercises?.any { it.exerciseId == exercise.id } == true
+        val sameFamily = session?.plan?.exercises?.any { planned ->
+            model.catalog.find(planned.exerciseId)?.familyId == exercise.familyId
+        } == true
+        val allowed = model.profile?.let { profile ->
+            model.catalog.eligible(profile).any { it.id == exercise.id }
+        } == true
+        if (session != null && sameFamily && !inToday && allowed) {
+            Button(
+                onClick = { model.useThisToday(exercise.id) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(stringResource(R.string.use_this_today))
+            }
+        } else if (inToday) {
+            Text(
+                stringResource(R.string.todays_version),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
         ExercisePhotos(exercise.imageFiles)
         if (exercise.primaryMuscles.isNotEmpty()) {
             Text(exercise.primaryMuscles.joinToString(", "))
