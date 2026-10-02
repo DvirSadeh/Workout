@@ -1,11 +1,13 @@
 package workout.app.ui
 
 import android.graphics.BitmapFactory
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,13 +25,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,9 +47,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -54,6 +61,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import workout.app.R
 import workout.app.data.SetDraft
+import workout.app.data.TodaySession
 import workout.domain.AdjustmentDirection
 import workout.domain.DayFocus
 import workout.domain.Experience
@@ -62,6 +70,10 @@ import workout.domain.LimitTag
 import workout.domain.LoadType
 import workout.domain.SessionRating
 import workout.domain.Sex
+import java.time.DayOfWeek
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import kotlin.math.abs
 
 @Composable
@@ -71,6 +83,9 @@ fun WorkoutApp(model: WorkoutViewModel) {
         if (uri != null) model.stageBackupFile(context, uri)
     }
     val import = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
+    BackHandler(enabled = model.importReady || model.canGoBack) {
+        if (model.importReady) model.cancelImport() else model.back()
+    }
     if (model.importReady) {
         ConfirmImport(model)
         return
@@ -109,54 +124,364 @@ private fun ConfirmImport(model: WorkoutViewModel) {
 
 @Composable
 private fun HomeScreen(model: WorkoutViewModel) {
-    val session = model.today
-    ScreenFrame(title = stringResource(R.string.app_name)) {
-        if (model.busy || session == null) {
+    val today = remember { LocalDate.now() }
+    val dateText = remember(today) {
+        today.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.ENGLISH))
+    }
+    Scaffold { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    stringResource(R.string.app_name),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(dateText, style = MaterialTheme.typography.headlineSmall)
+            }
+            val session = model.today
+            if (model.busy || session == null) {
+                HomePending(model)
+            } else {
+                HomeReady(model, session, today)
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun HomePending(model: WorkoutViewModel) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            Modifier.padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
             if (model.busy) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                 Text(model.status ?: stringResource(R.string.building))
             } else {
                 Text(model.status ?: stringResource(R.string.could_not_build))
-                Button(onClick = model::retry) { Text(stringResource(R.string.retry)) }
+                Button(onClick = model::retry, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.retry))
+                }
             }
-            return@ScreenFrame
         }
-        val plan = session.plan
-        Text(weekTitle(plan.deload, plan.weekInBlock, plan.focus), style = MaterialTheme.typography.titleMedium)
-        if (session.headline.isNotBlank()) Text(session.headline)
-        Text(plan.note)
-        if (model.firstSession) Text(stringResource(R.string.first_session_hint))
-        if (session.completed) {
-            val rating = session.rating?.let { ratingLabel(it) } ?: ""
-            Text(stringResource(R.string.done_today, rating))
-        }
-        Text(stringResource(R.string.disclaimer), style = MaterialTheme.typography.bodySmall)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.save_my_data))
-                Text(stringResource(R.string.save_my_data_detail), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+@Composable
+private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: LocalDate) {
+    val plan = session.plan
+    val started = model.sets.any { row -> row.any { it.done } }
+    val doneSets = model.sets.sumOf { row -> row.count { it.done } }
+    val totalSets = model.sets.sumOf { it.size }
+    val action = when {
+        session.completed -> R.string.review_workout
+        started -> R.string.continue_workout
+        else -> R.string.start_workout
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .background(MaterialTheme.colorScheme.primary),
+            )
+            Column(
+                Modifier.padding(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    focusLabel(plan.focus),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    if (plan.deload) {
+                        stringResource(R.string.recovery_week_label)
+                    } else {
+                        stringResource(R.string.week_number, plan.weekInBlock + 1)
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                WeekBars(plan.weekInBlock)
+                Text(
+                    stringResource(R.string.session_meta, model.profile?.minutesPerSession ?: 0, plan.exercises.size),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                if (session.headline.isNotBlank()) {
+                    Text(session.headline, color = MaterialTheme.colorScheme.secondary)
+                }
+                if (plan.note.isNotBlank()) Text(plan.note)
+                if (model.firstSession) {
+                    Text(stringResource(R.string.first_session_hint), style = MaterialTheme.typography.bodySmall)
+                }
+                if (session.completed) {
+                    val rating = session.rating?.let { ratingLabel(it) } ?: ""
+                    Text(
+                        stringResource(R.string.done_today, rating),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                } else if (started && totalSets > 0) {
+                    val nextIndex = model.sets.indexOfFirst { row -> row.any { !it.done } }
+                    val nextName = plan.exercises.getOrNull(nextIndex)?.let { planned ->
+                        model.catalog.find(planned.exerciseId)?.name
+                    }
+                    Text(stringResource(R.string.sets_progress, doneSets, totalSets))
+                    LinearProgressIndicator(
+                        progress = { doneSets.toFloat() / totalSets.toFloat() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(8.dp)
+                            .clip(RoundedCornerShape(99.dp)),
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                        gapSize = 0.dp,
+                        drawStopIndicator = {},
+                    )
+                    if (nextName != null) {
+                        Text(stringResource(R.string.next_exercise, nextName), style = MaterialTheme.typography.titleMedium)
+                    }
+                }
+                Button(
+                    onClick = model::openPlayer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Text(stringResource(action), style = MaterialTheme.typography.titleMedium)
+                }
             }
-            Switch(checked = model.saveMyData, onCheckedChange = model::onSaveMyData)
         }
-        model.backupNote?.let { Text(it) }
-        HorizontalDivider()
+    }
+
+    model.profile?.let { profile ->
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.your_plan), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(
+                        R.string.plan_line,
+                        goalLabel(profile.goal),
+                        profile.daysPerWeek,
+                        profile.minutesPerSession,
+                    ),
+                )
+                val skipped = listOf(
+                    LimitTag.KNEES to stringResource(R.string.limit_knees),
+                    LimitTag.SHOULDERS to stringResource(R.string.limit_shoulders),
+                    LimitTag.LOWER_BACK to stringResource(R.string.limit_back),
+                    LimitTag.WRISTS to stringResource(R.string.limit_wrists),
+                ).filter { (tag, _) -> tag in profile.limits }.joinToString(", ") { it.second }
+                if (skipped.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.skipping_limits, skipped),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                OutlinedButton(
+                    onClick = model::openProfile,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Text(stringResource(R.string.edit_plan))
+                }
+            }
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.todays_exercises), style = MaterialTheme.typography.titleMedium)
+        plan.exercises.forEachIndexed { index, planned ->
+            val name = model.catalog.find(planned.exerciseId)?.name ?: planned.exerciseId
+            val row = model.sets.getOrNull(index).orEmpty()
+            val finished = row.isNotEmpty() && row.all { it.done }
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { model.openExercise(planned.exerciseId) },
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surface,
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(name, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            stringResource(R.string.prescription, planned.sets, prescription(planned)) +
+                                loadSuffix(planned.loadKg, model.catalog.find(planned.exerciseId)?.loadType),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Text(
+                        stringResource(if (finished) R.string.done else if (planned.anchor) R.string.main_lift_badge else R.string.how_to),
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
+        }
+    }
+
+    model.profile?.let { profile ->
+        val weekStart = today.with(DayOfWeek.MONDAY)
+        val doneThisWeek = model.history.count { entry ->
+            !entry.date.isBefore(weekStart) && !entry.date.isAfter(today)
+        }
+        val target = profile.daysPerWeek.coerceAtLeast(1)
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(stringResource(R.string.this_week), style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.week_sessions, doneThisWeek, target))
+                LinearProgressIndicator(
+                    progress = { (doneThisWeek.toFloat() / target.toFloat()).coerceIn(0f, 1f) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(99.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    gapSize = 0.dp,
+                    drawStopIndicator = {},
+                )
+            }
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.recent_workouts),
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            TextButton(onClick = model::openHistory) { Text(stringResource(R.string.see_all)) }
+        }
+        if (model.history.isEmpty()) {
+            Text(stringResource(R.string.history_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            model.history.take(3).forEach { entry ->
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = model::openHistory),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            entry.date.format(DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)),
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        entry.rating?.let {
+                            Text(ratingLabel(it), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.main_lifts), style = MaterialTheme.typography.titleMedium)
         if (model.best.isEmpty()) {
-            Text(stringResource(R.string.main_lifts_empty))
+            Text(stringResource(R.string.main_lifts_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            model.best.forEach { lift -> Text("${lift.name} · ${lift.detail}") }
+            model.best.forEach { lift ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(lift.name, modifier = Modifier.weight(1f))
+                        Text(lift.detail, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
         }
-        Button(
-            onClick = model::openPlayer,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(
-                stringResource(if (session.completed) R.string.review_workout else R.string.start_workout),
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(stringResource(R.string.save_my_data), style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.save_my_data_detail), style = MaterialTheme.typography.bodySmall)
+                }
+                Switch(checked = model.saveMyData, onCheckedChange = model::onSaveMyData)
+            }
+            model.backupNote?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+    }
+
+    Text(
+        stringResource(R.string.disclaimer),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+@Composable
+private fun WeekBars(weekInBlock: Int) {
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(4) { week ->
+            val color = when {
+                week == weekInBlock -> MaterialTheme.colorScheme.primary
+                week < weekInBlock -> MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                else -> MaterialTheme.colorScheme.surfaceVariant
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(99.dp))
+                    .background(color),
             )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = model::openHistory) { Text(stringResource(R.string.history)) }
-            OutlinedButton(onClick = model::openProfile) { Text(stringResource(R.string.profile)) }
         }
     }
 }
@@ -556,16 +881,6 @@ private fun ExercisePhotos(files: List<String>) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun weekTitle(deload: Boolean, weekInBlock: Int, focus: DayFocus): String {
-    val name = focusLabel(focus)
-    return if (deload) {
-        stringResource(R.string.recovery_week, name)
-    } else {
-        stringResource(R.string.week_of_block, weekInBlock + 1, name)
     }
 }
 

@@ -57,7 +57,9 @@
     <string name="error_dumbbells">Enter at least one dumbbell weight, like 8 or 4, 6, 8.</string>
     <string name="api_key_hint">Optional. Stored only on this phone. Used to ask the coach for a session.</string>
     <string name="week_of_block">Week %1$d of 4 · %2$s</string>
+    <string name="week_number">Week %1$d of 4</string>
     <string name="recovery_week">Recovery week · %1$s</string>
+    <string name="recovery_week_label">Recovery week</string>
     <string name="focus_full">Full body</string>
     <string name="focus_upper">Upper body</string>
     <string name="focus_lower">Lower body</string>
@@ -117,4 +119,17 @@
     <string name="load_my_data">Load my data</string>
     <string name="saved_to_downloads">Saved workout-backup.json in Downloads.</string>
     <string name="save_failed">Could not save the file in Downloads.</string>
+    <string name="continue_workout">Continue workout</string>
+    <string name="edit_plan">Edit plan</string>
+    <string name="session_meta">%1$d min · %2$d exercises</string>
+    <string name="sets_progress">%1$d of %2$d sets</string>
+    <string name="this_week">This week</string>
+    <string name="week_sessions">%1$d of %2$d workouts</string>
+    <string name="your_plan">Your plan</string>
+    <string name="plan_line">%1$s · %2$d days a week · %3$d min</string>
+    <string name="todays_exercises">Today\'s exercises</string>
+    <string name="recent_workouts">Recent workouts</string>
+    <string name="see_all">See all</string>
+    <string name="next_exercise">Next · %1$s</string>
+    <string name="skipping_limits">Skipping %1$s</string>
 </resources>

@@ -236,6 +236,9 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         show(Screen.Exercise(id))
     }
 
+    val canGoBack: Boolean
+        get() = backStack.size > 1
+
     fun back() {
         if (backStack.size <= 1) return
         backStack.removeLast()
@@ -386,11 +389,13 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 ?: getApplication<Application>().getString(R.string.could_not_build)
             return
         }
-        today = session.getOrThrow()
+        val built = session.getOrThrow()
+        today = built
         profile = repository.profile()
         best = repository.bestLifts()
         history = repository.history()
         firstSession = history.isEmpty()
+        sets = repository.savedSets(built.plan)
         busy = false
         status = null
     }
