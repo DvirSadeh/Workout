@@ -139,6 +139,8 @@
     <string name="adjust_today_plan">Adjust today\'s plan</string>
     <string name="close_adjustments">Close</string>
     <string name="add_exercise">Add an exercise</string>
+    <string name="works_muscles">Works %1$s</string>
+    <string name="nothing_else_to_add">Nothing else fits the equipment you have.</string>
     <string name="remove_exercise">Remove %1$s</string>
     <string name="adjust_hardness">Adjust hardness</string>
     <string name="hardness_help">Easier and harder versions are the same movement. Use one and it replaces today\'s exercise.</string>

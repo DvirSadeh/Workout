@@ -44,6 +44,34 @@ object WorkoutSize {
         return plan.copy(exercises = next)
     }
 
+    fun additionChoices(plan: SessionPlan, profile: UserProfile, catalog: Catalog): List<ProgrammedExercise> {
+        if (plan.exercises.size >= range(plan.focus).last) return emptyList()
+        val used = plan.exercises.map { it.exerciseId }.toSet()
+        return catalog.eligible(profile)
+            .filter { it.id !in used }
+            .sortedWith(compareBy({ muscleRank(it) }, { it.name }))
+    }
+
+    fun add(plan: SessionPlan, profile: UserProfile, catalog: Catalog, exerciseId: String): SessionPlan {
+        if (plan.exercises.isEmpty() || plan.exercises.size >= range(plan.focus).last) return plan
+        if (plan.exercises.any { it.exerciseId == exerciseId }) return plan
+        val chosen = catalog.eligible(profile).firstOrNull { it.id == exerciseId } ?: return plan
+        val slot = Training.slots(plan.focus, plan.exercises.size + 1, plan.blockIndex, profile.limits)
+            .getOrNull(plan.exercises.size)
+        val template = plan.exercises.maxBy { it.repsHigh - it.repsLow }
+        val added = PlannedExercise(
+            exerciseId = chosen.id,
+            sets = template.sets,
+            repsLow = template.repsLow,
+            repsHigh = template.repsHigh,
+            loadKg = loadFor(chosen, profile),
+            restSeconds = template.restSeconds,
+            reason = "Added so today's workout is longer.",
+            anchor = slot != null && slot.anchor && chosen.pattern in slot.patterns,
+        )
+        return plan.copy(exercises = plan.exercises + added)
+    }
+
     private fun addOne(
         plan: SessionPlan,
         profile: UserProfile,
@@ -87,6 +115,26 @@ object WorkoutSize {
             anchor = slot.anchor,
         )
         return plan.copy(exercises = plan.exercises + added)
+    }
+
+    private val muscleOrder = listOf(
+        "chest",
+        "shoulders",
+        "middle back",
+        "biceps",
+        "triceps",
+        "abdominals",
+        "lower back",
+        "glutes",
+        "quadriceps",
+        "hamstrings",
+        "calves",
+    )
+
+    private fun muscleRank(exercise: ProgrammedExercise): Int {
+        val muscle = exercise.primaryMuscles.firstOrNull()?.lowercase() ?: return muscleOrder.size
+        val index = muscleOrder.indexOf(muscle)
+        return if (index < 0) muscleOrder.size else index
     }
 
     private fun loadFor(exercise: ProgrammedExercise, profile: UserProfile): Double? {

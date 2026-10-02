@@ -181,8 +181,8 @@ class WorkoutRepository(
         dao.saveSession(entity.copy(rating = rating.name, completed = true))
     }
 
-    suspend fun addToToday(): SessionPlan? = editToday { plan, profile, catalog, history ->
-        Planner.resizeSession(plan, profile, catalog, history, 1)
+    suspend fun addToToday(exerciseId: String): SessionPlan? = editToday { plan, profile, catalog, _ ->
+        Planner.addExercise(plan, profile, catalog, exerciseId)
     }
 
     suspend fun removeFromToday(exerciseId: String): SessionPlan? = editToday { plan, _, _, _ ->

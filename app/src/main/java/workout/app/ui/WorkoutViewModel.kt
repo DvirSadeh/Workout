@@ -344,7 +344,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         todayPlanOpen = !todayPlanOpen
     }
 
-    fun addExercise() = changeToday { repository.addToToday() }
+    fun addExercise(exerciseId: String) = changeToday { repository.addToToday(exerciseId) }
 
     fun removeExercise(exerciseId: String) = changeToday { repository.removeFromToday(exerciseId) }
 

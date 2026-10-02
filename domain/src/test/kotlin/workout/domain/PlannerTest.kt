@@ -339,6 +339,28 @@ class PlannerTest {
     }
 
     @Test
+    fun additionChoicesSkipExercisesAlreadyPlannedAndEquipmentLimits() {
+        val profile = profile(minutes = 20, limits = setOf(LimitTag.SHOULDERS))
+        val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        val choices = Planner.additionChoices(plan, profile, catalog)
+        assertTrue(choices.isNotEmpty())
+        assertTrue(choices.none { choice -> plan.exercises.any { it.exerciseId == choice.id } })
+        assertTrue(choices.none { it.id == "Standing_Dumbbell_Press" })
+        val picked = choices.first { it.pattern == MovementPattern.CORE }
+        val added = Planner.addExercise(plan, profile, catalog, picked.id)
+        assertEquals(plan.exercises, added.exercises.dropLast(1))
+        assertEquals(picked.id, added.exercises.last().exerciseId)
+        assertEquals(plan.exercises.maxOf { it.sets }, added.exercises.last().sets)
+        assertEquals(added, Planner.addExercise(added, profile, catalog, picked.id))
+        assertEquals(plan, Planner.addExercise(plan, profile, catalog, "Made_Up_Lift"))
+        var full = plan
+        repeat(6) { full = Planner.resizeSession(full, profile, catalog, emptyList(), 1) }
+        assertEquals(7, full.exercises.size)
+        assertTrue(Planner.additionChoices(full, profile, catalog).isEmpty())
+        assertEquals(full, Planner.addExercise(full, profile, catalog, picked.id))
+    }
+
+    @Test
     fun removeDropsThatExerciseAndStopsAtTheMinimum() {
         val profile = profile(minutes = 20)
         val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)

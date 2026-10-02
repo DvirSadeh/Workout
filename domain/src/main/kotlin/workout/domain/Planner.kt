@@ -26,6 +26,12 @@ object Planner {
         delta: Int,
     ): SessionPlan = WorkoutSize.resize(plan, profile, catalog, history, delta)
 
+    fun additionChoices(plan: SessionPlan, profile: UserProfile, catalog: Catalog): List<ProgrammedExercise> =
+        WorkoutSize.additionChoices(plan, profile, catalog)
+
+    fun addExercise(plan: SessionPlan, profile: UserProfile, catalog: Catalog, exerciseId: String): SessionPlan =
+        WorkoutSize.add(plan, profile, catalog, exerciseId)
+
     fun removeExercise(plan: SessionPlan, exerciseId: String): SessionPlan =
         WorkoutSize.remove(plan, exerciseId)
 

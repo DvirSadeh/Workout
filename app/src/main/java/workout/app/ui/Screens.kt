@@ -26,7 +26,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -89,6 +91,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.LocalDensity
@@ -108,6 +111,7 @@ import workout.domain.LimitTag
 import workout.domain.LoadType
 import workout.domain.SessionRating
 import workout.domain.Sex
+import workout.domain.PlannedExercise
 import workout.domain.ProgrammedExercise
 import workout.domain.UserProfile
 import workout.domain.WorkoutSize
@@ -583,15 +587,33 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
     val limits = WorkoutSize.range(plan.focus)
     val canRemove = exercises.size > limits.first
     val canAdd = exercises.size < limits.last
+    val profile = model.profile
+    val choices = if (profile == null) {
+        emptyList()
+    } else {
+        WorkoutSize.additionChoices(plan, profile, model.catalog)
+    }
     val haptics = LocalHapticFeedback.current
+    val density = LocalDensity.current
     val slots = remember { mutableStateMapOf<Int, Rect>() }
     var gridOrigin by remember { mutableStateOf(Offset.Zero) }
     var fromSlot by remember { mutableIntStateOf(-1) }
-    var hoverSlot by remember { mutableIntStateOf(-1) }
+    var dropGap by remember { mutableIntStateOf(-1) }
     var pointer by remember { mutableStateOf(Offset.Zero) }
     var grabOffset by remember { mutableStateOf(Offset.Zero) }
+    var addOpen by remember { mutableStateOf(false) }
     val dragging = fromSlot >= 0
-    val cells = exercises.size + if (canAdd) 1 else 0
+
+    if (addOpen && canAdd) {
+        AddExerciseDialog(
+            choices = choices,
+            onDismiss = { addOpen = false },
+            onPick = { exerciseId ->
+                addOpen = false
+                model.addExercise(exerciseId)
+            },
+        )
+    }
 
     Box(Modifier.fillMaxWidth()) {
         Column(
@@ -611,7 +633,7 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
                         },
                         onDragStart = { index, position ->
                             fromSlot = index
-                            hoverSlot = index
+                            dropGap = index
                             pointer = position
                             val topLeft = slots[index]?.topLeft?.minus(gridOrigin) ?: Offset.Zero
                             grabOffset = position - topLeft
@@ -619,76 +641,70 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
                         },
                         onMove = { position ->
                             pointer = position
-                            val finger = gridOrigin + position
-                            val hover = slots.entries.firstOrNull { (index, rect) ->
-                                index < exercises.size && rect.contains(finger)
-                            }?.key
-                            if (hover != null) hoverSlot = hover
+                            val fingerY = (gridOrigin + position).y
+                            var gap = exercises.size
+                            for (index in exercises.indices) {
+                                val rect = slots[index] ?: continue
+                                if (fingerY < (rect.top + rect.bottom) / 2f) {
+                                    gap = index
+                                    break
+                                }
+                            }
+                            dropGap = gap
                         },
                         onDrop = {
                             val from = fromSlot
-                            val to = hoverSlot
+                            val gap = dropGap
                             fromSlot = -1
-                            hoverSlot = -1
-                            if (from < 0 || to < 0 || from == to) return@arrangeExercises
-                            if (from > exercises.lastIndex || to > exercises.lastIndex) return@arrangeExercises
+                            dropGap = -1
+                            if (from < 0 || gap < 0 || gap == from || gap == from + 1) return@arrangeExercises
+                            if (from > exercises.lastIndex) return@arrangeExercises
                             val ids = exercises.map { it.exerciseId }.toMutableList()
-                            ids.add(to, ids.removeAt(from))
+                            val moving = ids.removeAt(from)
+                            val insertAt = if (gap > from) gap - 1 else gap
+                            if (insertAt !in 0..ids.size) return@arrangeExercises
+                            ids.add(insertAt, moving)
                             model.reorderToday(ids)
                         },
                         onCancel = {
                             fromSlot = -1
-                            hoverSlot = -1
+                            dropGap = -1
                         },
                     )
                 },
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            for (row in 0 until (cells + 1) / 2) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    for (column in 0..1) {
-                        val index = row * 2 + column
-                        when {
-                            index < exercises.size -> {
-                                val planned = exercises[index]
-                                val exercise = model.catalog.find(planned.exerciseId)
-                                val name = exercise?.name ?: planned.exerciseId
-                                val finished = model.sets.getOrNull(index).orEmpty().let { rowSets ->
-                                    rowSets.isNotEmpty() && rowSets.all { it.done }
-                                }
-                                ExerciseTile(
-                                    name = name,
-                                    detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
-                                        loadSuffix(planned.loadKg, exercise?.loadType),
-                                    finished = finished,
-                                    removeLabel = stringResource(R.string.remove_exercise, name),
-                                    canRemove = canRemove,
-                                    highlighted = dragging && index == hoverSlot && hoverSlot != fromSlot,
-                                    dimmed = index == fromSlot,
-                                    onRemove = { model.removeExercise(planned.exerciseId) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(108.dp)
-                                        .onGloballyPositioned { coords ->
-                                            slots[index] = Rect(
-                                                coords.positionInRoot(),
-                                                Size(coords.size.width.toFloat(), coords.size.height.toFloat()),
-                                            )
-                                        },
-                                )
-                            }
-                            index == exercises.size && canAdd -> AddExerciseTile(
-                                label = stringResource(R.string.add_exercise),
-                                onAdd = model::addExercise,
-                                modifier = Modifier.weight(1f).height(108.dp),
-                            )
-                            else -> Spacer(Modifier.weight(1f).height(108.dp))
-                        }
-                    }
+            exercises.forEachIndexed { index, planned ->
+                val exercise = model.catalog.find(planned.exerciseId)
+                val name = exercise?.name ?: planned.exerciseId
+                val finished = model.sets.getOrNull(index).orEmpty().let { rowSets ->
+                    rowSets.isNotEmpty() && rowSets.all { it.done }
                 }
+                ExerciseRow(
+                    name = name,
+                    detail = exerciseDetail(planned),
+                    finished = finished,
+                    imagePath = exercise?.imageFiles?.firstOrNull(),
+                    muscles = exercise?.primaryMuscles.orEmpty(),
+                    removeLabel = stringResource(R.string.remove_exercise, name),
+                    canRemove = canRemove,
+                    dimmed = index == fromSlot,
+                    onRemove = { model.removeExercise(planned.exerciseId) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onGloballyPositioned { coords ->
+                            slots[index] = Rect(
+                                coords.positionInRoot(),
+                                Size(coords.size.width.toFloat(), coords.size.height.toFloat()),
+                            )
+                        },
+                )
+            }
+            if (canAdd) {
+                AddExerciseTile(
+                    label = stringResource(R.string.add_exercise),
+                    onAdd = { addOpen = true },
+                )
             }
         }
         if (dragging) {
@@ -697,17 +713,16 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
             if (planned != null && rect != null) {
                 val exercise = model.catalog.find(planned.exerciseId)
                 val name = exercise?.name ?: planned.exerciseId
-                val density = LocalDensity.current
                 val left = pointer.x - grabOffset.x
                 val top = pointer.y - grabOffset.y
-                ExerciseTile(
+                ExerciseRow(
                     name = name,
-                    detail = stringResource(R.string.prescription, planned.sets, prescription(planned)) +
-                        loadSuffix(planned.loadKg, exercise?.loadType),
+                    detail = exerciseDetail(planned),
                     finished = false,
+                    imagePath = exercise?.imageFiles?.firstOrNull(),
+                    muscles = exercise?.primaryMuscles.orEmpty(),
                     removeLabel = "",
                     canRemove = false,
-                    highlighted = true,
                     dimmed = false,
                     lifted = true,
                     onRemove = {},
@@ -718,53 +733,114 @@ private fun AdjustableExercises(model: WorkoutViewModel, session: TodaySession) 
                         layout(0, 0) {
                             placeable.placeWithLayer(left.roundToInt(), top.roundToInt()) {
                                 shadowElevation = with(density) { 12.dp.toPx() }
-                                scaleX = 1.04f
-                                scaleY = 1.04f
+                                scaleX = 1.03f
+                                scaleY = 1.03f
                             }
                         }
                     },
                 )
             }
+            val lineY = dropLineY(dropGap, exercises.size, slots)
+            if (lineY != null) {
+                val localY = lineY - gridOrigin.y
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .offset {
+                            IntOffset(0, (localY - with(density) { 5.dp.toPx() }).roundToInt())
+                        },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Box(
+                        Modifier
+                            .size(10.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    )
+                    Box(
+                        Modifier
+                            .weight(1f)
+                            .height(4.dp)
+                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(99.dp)),
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun dropLineY(gap: Int, count: Int, slots: Map<Int, Rect>): Float? {
+    if (gap < 0 || count == 0) return null
+    val first = slots[0] ?: return null
+    val last = slots[count - 1] ?: return null
+    return when {
+        gap <= 0 -> first.top
+        gap >= count -> last.bottom
+        else -> {
+            val above = slots[gap - 1] ?: return null
+            val below = slots[gap] ?: return null
+            (above.bottom + below.top) / 2f
         }
     }
 }
 
 @Composable
-private fun ExerciseTile(
+private fun ExerciseRow(
     name: String,
     detail: String,
     finished: Boolean,
+    imagePath: String?,
+    muscles: List<String>,
     removeLabel: String,
     canRemove: Boolean,
-    highlighted: Boolean,
     dimmed: Boolean,
     onRemove: () -> Unit,
     modifier: Modifier = Modifier,
     lifted: Boolean = false,
 ) {
-    Box(modifier.alpha(if (dimmed) 0.35f else 1f)) {
-        Surface(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(
-                    if (highlighted) {
-                        Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(14.dp))
-                    } else {
-                        Modifier
-                    },
-                ),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
+    val muscleNote = if (muscles.isEmpty()) {
+        null
+    } else {
+        stringResource(R.string.works_muscles, muscles.joinToString(", "))
+    }
+    Surface(
+        modifier = modifier.alpha(if (dimmed) 0.35f else 1f),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Row(
+            Modifier.padding(start = 6.dp, top = 8.dp, end = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Column(
-                Modifier.padding(start = 12.dp, top = 12.dp, end = 40.dp, bottom = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            Box(
+                Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(
+                        MaterialTheme.colorScheme.background.copy(alpha = if (canRemove || lifted) 1f else 0.45f),
+                    )
+                    .then(
+                        if (lifted) {
+                            Modifier
+                        } else {
+                            Modifier.tapControl(enabled = canRemove, label = removeLabel, onTap = onRemove)
+                        },
+                    ),
+                contentAlignment = Alignment.Center,
             ) {
+                Text(
+                    "−",
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (canRemove || lifted) 1f else 0.45f),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     name,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleSmall,
+                    style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
                     detail,
@@ -781,27 +857,45 @@ private fun ExerciseTile(
                     )
                 }
             }
+            ExerciseThumb(imagePath, Modifier.size(64.dp))
+            BodyDiagram(
+                muscles = muscles,
+                modifier = Modifier.size(width = 44.dp, height = 72.dp),
+                contentDescription = muscleNote,
+            )
         }
-        Box(
-            Modifier
-                .align(Alignment.TopEnd)
-                .padding(6.dp)
-                .size(32.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.background.copy(alpha = if (canRemove || lifted) 1f else 0.45f))
-                .then(
-                    if (lifted) {
-                        Modifier
-                    } else {
-                        Modifier.tapControl(enabled = canRemove, label = removeLabel, onTap = onRemove)
-                    },
-                ),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                "−",
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (canRemove || lifted) 1f else 0.45f),
-                style = MaterialTheme.typography.titleMedium,
+    }
+}
+
+@Composable
+private fun ExerciseThumb(path: String?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, path) {
+        value = if (path == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    context.assets.open(path).use { stream ->
+                        BitmapFactory.decodeStream(stream)?.asImageBitmap()
+                    }
+                }.getOrNull()
+            }
+        }
+    }
+    Box(
+        modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center,
+    ) {
+        val image = bitmap
+        if (image != null) {
+            Image(
+                bitmap = image,
+                contentDescription = stringResource(R.string.photo),
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
             )
         }
     }
@@ -811,11 +905,12 @@ private fun ExerciseTile(
 private fun AddExerciseTile(
     label: String,
     onAdd: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier
-            .clip(RoundedCornerShape(14.dp))
+        Modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clip(RoundedCornerShape(16.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .tapControl(enabled = true, label = label, onTap = onAdd),
         contentAlignment = Alignment.Center,
@@ -823,10 +918,79 @@ private fun AddExerciseTile(
         Text(
             "+",
             color = MaterialTheme.colorScheme.primary,
-            style = MaterialTheme.typography.headlineLarge,
+            style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.SemiBold,
         )
     }
+}
+
+@Composable
+private fun AddExerciseDialog(
+    choices: List<ProgrammedExercise>,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface,
+        ) {
+            Column(
+                Modifier
+                    .heightIn(max = 560.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(stringResource(R.string.add_exercise), style = MaterialTheme.typography.headlineSmall)
+                if (choices.isEmpty()) {
+                    Text(
+                        stringResource(R.string.nothing_else_to_add),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                choices.forEach { exercise ->
+                    val muscles = exercise.primaryMuscles.joinToString(", ")
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { onPick(exercise.id) }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Text(
+                            exercise.name,
+                            modifier = Modifier.weight(1f),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        ExerciseThumb(exercise.imageFiles.firstOrNull(), Modifier.size(48.dp))
+                        BodyDiagram(
+                            muscles = exercise.primaryMuscles,
+                            modifier = Modifier.size(width = 36.dp, height = 60.dp),
+                            contentDescription = if (muscles.isBlank()) {
+                                null
+                            } else {
+                                stringResource(R.string.works_muscles, muscles)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun exerciseDetail(planned: PlannedExercise): String {
+    val reps = stringResource(R.string.prescription, planned.sets, prescription(planned))
+    val load = planned.loadKg
+    return if (load != null) "$reps · ${trimKg(load)} kg" else reps
 }
 
 private fun Modifier.tapControl(enabled: Boolean, label: String, onTap: () -> Unit): Modifier {
