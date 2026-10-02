@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -30,7 +31,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -66,7 +66,11 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -243,7 +247,7 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (session.headline.isNotBlank()) CautionMark(session.headline)
+                    if (session.headline.isNotBlank()) SessionNote(session.headline)
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     plan.exercises.withIndex().chunked(2).forEach { pair ->
@@ -308,6 +312,15 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                     shape = RoundedCornerShape(16.dp),
                 ) {
                     Text(stringResource(action), style = MaterialTheme.typography.titleMedium)
+                }
+                if (session.completed || started) {
+                    OutlinedButton(
+                        onClick = model::resetToday,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Text(stringResource(R.string.reset_today))
+                    }
                 }
             }
         }
@@ -414,34 +427,47 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
 }
 
 @Composable
-private fun CautionMark(message: String) {
+private fun SessionNote(message: String) {
     var open by remember { mutableStateOf(false) }
-    val label = stringResource(R.string.caution)
-    Box(
-        Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .background(Color(0xFF3A3218))
-            .clickable { open = true }
-            .semantics { contentDescription = label },
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            "!",
-            color = Color(0xFFF0C14D),
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-        )
-    }
-    if (open) {
-        AlertDialog(
-            onDismissRequest = { open = false },
-            confirmButton = {
-                TextButton(onClick = { open = false }) { Text(stringResource(R.string.got_it)) }
-            },
-            title = { Text(label) },
-            text = { Text(message) },
-        )
+    val label = stringResource(R.string.session_note)
+    val density = LocalDensity.current
+    Box {
+        Box(
+            Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .clickable { open = !open }
+                .semantics { contentDescription = label },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "i",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+        if (open) {
+            Popup(
+                alignment = Alignment.TopEnd,
+                offset = with(density) { IntOffset(0, 48.dp.roundToPx()) },
+                onDismissRequest = { open = false },
+                properties = PopupProperties(focusable = true),
+            ) {
+                Surface(
+                    modifier = Modifier.widthIn(max = 280.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shadowElevation = 8.dp,
+                ) {
+                    Text(
+                        message,
+                        modifier = Modifier.padding(16.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
     }
 }
 

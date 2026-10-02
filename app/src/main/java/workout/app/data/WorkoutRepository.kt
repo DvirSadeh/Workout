@@ -181,6 +181,14 @@ class WorkoutRepository(
         dao.saveSession(entity.copy(rating = rating.name, completed = true))
     }
 
+    suspend fun resetToday() = withContext(Dispatchers.IO) {
+        val today = LocalDate.now().toString()
+        val entity = dao.session(today) ?: return@withContext
+        dao.saveSession(entity.copy(rating = null, completed = false))
+        dao.deleteSets(today)
+        dao.deleteAdjustments(today)
+    }
+
     suspend fun history(): List<HistoryEntry> = withContext(Dispatchers.IO) {
         dao.sessions().filter { it.completed }.sortedByDescending { it.date }.map { entity ->
             val record = sessionRecord(entity, dao.sets(entity.date), dao.adjustments(entity.date))

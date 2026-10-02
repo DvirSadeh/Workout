@@ -337,6 +337,29 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun resetToday() {
+        val session = today ?: return
+        viewModelScope.launch {
+            gate.withLock {
+                repository.resetToday()
+                today = session.copy(completed = false, rating = null)
+                sets = session.plan.exercises.map { planned ->
+                    List(planned.sets) { SetDraft(planned.repsLow, planned.loadKg, done = false) }
+                }
+                restJob?.cancel()
+                restRemaining = 0
+                askRating = false
+                coachMessage = ""
+                exerciseIndex = 0
+                setsDirty = false
+            }
+            history = repository.history()
+            best = repository.bestLifts()
+            firstSession = history.isEmpty()
+            scheduleBackup()
+        }
+    }
+
     fun requestFinish() {
         askRating = true
     }
