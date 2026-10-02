@@ -113,6 +113,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var playMode by mutableStateOf(readPlayMode())
         private set
+    var guidanceAccepted by mutableStateOf(playPrefs.getBoolean(GUIDANCE_ACCEPTED, false))
+        private set
     var stepIndex by mutableIntStateOf(0)
         private set
     var sets by mutableStateOf<List<List<SetDraft>>>(emptyList())
@@ -284,10 +286,15 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun choosePlayMode(mode: PlayMode) {
-        if (mode == playMode) return
+        val changed = mode != playMode
         playMode = mode
-        playPrefs.edit().putString(PLAY_MODE, mode.name).apply()
-        landOnFirstUndone()
+        playPrefs.edit().putString(PLAY_MODE, mode.name).putBoolean(ORDER_CHOSEN, true).apply()
+        if (changed) landOnFirstUndone()
+    }
+
+    fun acceptGuidance() {
+        playPrefs.edit().putBoolean(GUIDANCE_ACCEPTED, true).apply()
+        guidanceAccepted = true
     }
 
     fun changeReps(delta: Int) {
@@ -624,9 +631,11 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     private fun isSetDone(exercise: Int, set: Int): Boolean =
         sets.getOrNull(exercise)?.getOrNull(set)?.done == true
 
-    private fun readPlayMode(): PlayMode =
-        runCatching { PlayMode.valueOf(playPrefs.getString(PLAY_MODE, PlayMode.STRAIGHT.name).orEmpty()) }
-            .getOrDefault(PlayMode.STRAIGHT)
+    private fun readPlayMode(): PlayMode {
+        if (!playPrefs.getBoolean(ORDER_CHOSEN, false)) return PlayMode.CIRCUIT
+        return runCatching { PlayMode.valueOf(playPrefs.getString(PLAY_MODE, null).orEmpty()) }
+            .getOrDefault(PlayMode.CIRCUIT)
+    }
 
     private suspend fun loadHome(replaceStack: Boolean) {
         busy = true
@@ -806,6 +815,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 }
 
 private const val PLAY_MODE = "mode"
+private const val ORDER_CHOSEN = "order_chosen"
+private const val GUIDANCE_ACCEPTED = "guidance_accepted"
 
 internal fun trimKg(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()

@@ -78,6 +78,9 @@
     <string name="skip">Skip</string>
     <string name="mode_each">Each exercise</string>
     <string name="mode_row">In a row</string>
+    <string name="workout_order">Workout order</string>
+    <string name="guidance_accept">I understand</string>
+    <string name="guidance_continue">Continue</string>
     <string name="mode_each_note">Every set of this exercise, with a rest after each set, then the next exercise.</string>
     <string name="mode_row_note">One set of each exercise, then a rest, then again.</string>
     <string name="play_straight_place">Set %1$d of %2$d · Exercise %3$d of %4$d</string>

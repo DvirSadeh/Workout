@@ -45,12 +45,12 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
+
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -127,7 +127,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import workout.app.R
 import workout.app.data.TodaySession
-import workout.domain.AdjustmentDirection
 import workout.domain.DayFocus
 import workout.domain.Experience
 import workout.domain.Goal
@@ -160,6 +159,10 @@ fun WorkoutApp(model: WorkoutViewModel) {
     }
     if (model.importReady) {
         ConfirmImport(model)
+        return
+    }
+    if (model.screen != Screen.Loading && !model.guidanceAccepted) {
+        GuidanceScreen(model::acceptGuidance)
         return
     }
     when (val screen = model.screen) {
@@ -466,12 +469,6 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
             model.backupNote?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
     }
-
-    Text(
-        stringResource(R.string.disclaimer),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
 }
 
 @Composable
@@ -1415,15 +1412,6 @@ private fun PlayerScreen(model: WorkoutViewModel) {
             if (model.askRating) {
                 RatingBlock(model, Modifier.weight(1f))
             } else {
-                PlayModeToggle(model)
-                Text(
-                    stringResource(
-                        if (model.playMode == PlayMode.CIRCUIT) R.string.mode_row_note else R.string.mode_each_note,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Spacer(Modifier.height(8.dp))
                 when (step) {
                     is PlayStep.Rest -> RestStep(model, steps, Modifier.weight(1f))
                     is PlayStep.Work -> WorkStep(model, plan, step, Modifier.weight(1f))
@@ -1480,49 +1468,61 @@ private fun WorkStep(
     val draft = model.sets.getOrNull(work.exerciseIndex)?.getOrNull(work.setIndex)
     Column(modifier) {
         Column(
-            Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (planned != null) {
                 Text(
                     exercise?.name ?: planned.exerciseId,
                     style = MaterialTheme.typography.headlineSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    if (model.playMode == PlayMode.CIRCUIT) {
-                        val rounds = plan.exercises.maxOf { it.sets }.coerceAtLeast(1)
-                        stringResource(
-                            R.string.play_circuit_place,
-                            work.setIndex + 1,
-                            rounds,
-                            work.exerciseIndex + 1,
-                            plan.exercises.size,
-                        )
-                    } else {
-                        stringResource(
-                            R.string.play_straight_place,
-                            work.setIndex + 1,
-                            planned.sets,
-                            work.exerciseIndex + 1,
-                            plan.exercises.size,
-                        )
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (planned.anchor) {
-                    Text(stringResource(R.string.main_lift_badge), color = MaterialTheme.colorScheme.primary)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (model.playMode == PlayMode.CIRCUIT) {
+                            val rounds = plan.exercises.maxOf { it.sets }.coerceAtLeast(1)
+                            stringResource(
+                                R.string.play_circuit_place,
+                                work.setIndex + 1,
+                                rounds,
+                                work.exerciseIndex + 1,
+                                plan.exercises.size,
+                            )
+                        } else {
+                            stringResource(
+                                R.string.play_straight_place,
+                                work.setIndex + 1,
+                                planned.sets,
+                                work.exerciseIndex + 1,
+                                plan.exercises.size,
+                            )
+                        },
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    if (planned.anchor) {
+                        Text(stringResource(R.string.main_lift_badge), color = MaterialTheme.colorScheme.primary)
+                    }
                 }
-                ExercisePhotos(exercise?.imageFiles.orEmpty(), photoHeight = 168.dp)
+                ExercisePhotos(
+                    exercise?.imageFiles.orEmpty(),
+                    modifier = Modifier.weight(1f, fill = false).heightIn(max = 148.dp),
+                    photoHeight = 148.dp,
+                )
                 Text(
                     stringResource(R.string.prescription, planned.sets, prescription(planned)) +
                         loadSuffix(planned.loadKg, exercise?.loadType),
                     style = MaterialTheme.typography.titleMedium,
                 )
                 if (planned.reason.isNotBlank()) {
-                    Text(planned.reason, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        planned.reason,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
             if (draft != null) {
@@ -1547,21 +1547,13 @@ private fun WorkStep(
                     onSelect = model::selectLoad,
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { model.adjust(AdjustmentDirection.EASIER) }) {
-                    Text(stringResource(R.string.easier))
-                }
-                OutlinedButton(onClick = { model.adjust(AdjustmentDirection.HARDER) }) {
-                    Text(stringResource(R.string.harder))
-                }
+            if (model.coachMessage.isNotBlank()) {
+                Text(model.coachMessage, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            if (model.coachMessage.isNotBlank()) Text(model.coachMessage)
             Row {
                 TextButton(onClick = model::openHowTo) { Text(stringResource(R.string.how_to)) }
                 TextButton(onClick = model::requestFinish) { Text(stringResource(R.string.finish)) }
             }
-            Text(stringResource(R.string.disclaimer), style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(8.dp))
         }
         MainAction(onClick = model::completeCurrent, label = stringResource(R.string.done))
         SkipAction(model)
@@ -1691,17 +1683,53 @@ private fun FinishedSession(model: WorkoutViewModel, plan: workout.domain.Sessio
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DumbbellPicker(owned: List<Double>, selected: Double?, onSelect: (Double) -> Unit) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        Modifier.horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         owned.forEach { kilograms ->
             val picked = selected != null && abs(selected - kilograms) < 0.05
+            val label = "${trimKg(kilograms)} kg"
             if (picked) {
-                Button(onClick = { onSelect(kilograms) }) { Text("${trimKg(kilograms)} kg") }
+                Button(onClick = { onSelect(kilograms) }) { Text(label) }
             } else {
-                OutlinedButton(onClick = { onSelect(kilograms) }) { Text("${trimKg(kilograms)} kg") }
+                OutlinedButton(onClick = { onSelect(kilograms) }) { Text(label) }
             }
+        }
+    }
+}
+
+@Composable
+private fun GuidanceScreen(onAccept: () -> Unit) {
+    var accepted by remember { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(horizontal = 24.dp, vertical = 32.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Text(stringResource(R.string.disclaimer), style = MaterialTheme.typography.headlineSmall)
+        Spacer(Modifier.height(24.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(checked = accepted, onCheckedChange = { accepted = it })
+            Text(
+                stringResource(R.string.guidance_accept),
+                modifier = Modifier.clickable { accepted = !accepted },
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Button(
+            onClick = onAccept,
+            enabled = accepted,
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Text(stringResource(R.string.guidance_continue), style = MaterialTheme.typography.titleMedium)
         }
     }
 }
@@ -1902,7 +1930,15 @@ private fun ProfileScreen(
         OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
             Text(stringResource(R.string.load_my_data))
         }
-        if (onboarding) Text(stringResource(R.string.disclaimer))
+        Text(stringResource(R.string.workout_order), style = MaterialTheme.typography.titleMedium)
+        PlayModeToggle(model)
+        Text(
+            stringResource(
+                if (model.playMode == PlayMode.CIRCUIT) R.string.mode_row_note else R.string.mode_each_note,
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
         OutlinedTextField(
             value = form.age,
             onValueChange = { model.updateForm(form.copy(age = it)) },
@@ -2054,7 +2090,11 @@ private fun ScreenFrame(
 }
 
 @Composable
-private fun ExercisePhotos(files: List<String>, photoHeight: Dp = 240.dp) {
+private fun ExercisePhotos(
+    files: List<String>,
+    modifier: Modifier = Modifier,
+    photoHeight: Dp = 240.dp,
+) {
     val context = LocalContext.current
     val bitmaps by produceState(initialValue = emptyList<ImageBitmap>(), files) {
         value = withContext(Dispatchers.IO) {
@@ -2077,7 +2117,7 @@ private fun ExercisePhotos(files: List<String>, photoHeight: Dp = 240.dp) {
         }
     }
     Box(
-        Modifier
+        modifier
             .fillMaxWidth()
             .height(photoHeight)
             .background(MaterialTheme.colorScheme.surfaceVariant),
