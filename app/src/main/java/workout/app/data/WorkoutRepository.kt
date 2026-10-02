@@ -7,6 +7,7 @@ import workout.app.coach.CoachClient
 import workout.domain.AdjustmentDirection
 import workout.domain.AdjustmentResult
 import workout.domain.Catalog
+import workout.domain.MuscleLine
 import workout.domain.Planner
 import workout.domain.PlannedExercise
 import workout.domain.PlanSource
@@ -14,6 +15,7 @@ import workout.domain.SessionPlan
 import workout.domain.SessionRating
 import workout.domain.SessionRecord
 import workout.domain.Training
+import workout.domain.TrainingProgress
 import workout.domain.UserProfile
 import java.time.LocalDate
 
@@ -30,8 +32,6 @@ data class HistoryEntry(
     val note: String,
     val lines: List<String>,
 )
-
-data class BestLift(val name: String, val detail: String)
 
 class WorkoutRepository(
     context: Context,
@@ -248,24 +248,11 @@ class WorkoutRepository(
         }
     }
 
-    suspend fun bestLifts(): List<BestLift> = withContext(Dispatchers.IO) {
-        val best = linkedMapOf<String, BestLift>()
-        dao.sessions().filter { it.completed }.forEach { entity ->
-            val record = sessionRecord(entity, dao.sets(entity.date), emptyList())
-            record.exercises.filter { it.anchor }.forEach { logged ->
-                val done = logged.sets.filter { it.completed }
-                if (done.isEmpty()) return@forEach
-                val name = catalog.find(logged.exerciseId)?.name ?: logged.exerciseId
-                val topReps = done.maxOf { it.reps }
-                val load = logged.prescribedLoadKg
-                val detail = if (load == null) "$topReps reps" else "${trim(load)} kg × $topReps"
-                val previous = best[logged.exerciseId]
-                val better = previous == null || (load ?: 0.0) > loadOf(previous) ||
-                    ((load ?: 0.0) == loadOf(previous) && topReps > repsOf(previous))
-                if (better) best[logged.exerciseId] = BestLift(name, detail)
-            }
+    suspend fun progress(): List<MuscleLine> = withContext(Dispatchers.IO) {
+        val records = dao.sessions().map { entity ->
+            sessionRecord(entity, dao.sets(entity.date), emptyList())
         }
-        best.values.toList()
+        TrainingProgress.lines(records) { id -> catalog.find(id)?.primaryMuscles.orEmpty() }
     }
 
     private suspend fun build(profile: UserProfile, history: List<SessionRecord>, today: LocalDate): TodaySession {
@@ -373,10 +360,6 @@ class WorkoutRepository(
     }
 
     private fun trim(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
-
-    private fun loadOf(lift: BestLift): Double = lift.detail.substringBefore(" kg").toDoubleOrNull() ?: 0.0
-
-    private fun repsOf(lift: BestLift): Int = lift.detail.substringAfterLast("× ").trim().substringBefore(" ").toIntOrNull() ?: 0
 }
 
 data class SetDraft(val reps: Int, val loadKg: Double?, val done: Boolean)

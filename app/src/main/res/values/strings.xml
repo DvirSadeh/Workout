@@ -12,7 +12,9 @@
     <string name="history">History</string>
     <string name="profile">Profile</string>
     <string name="save">Save</string>
-    <string name="main_lifts">This month\'s main lifts</string>
+    <string name="progress_title">Progress</string>
+    <string name="progress_empty">Progress shows up here after you log a workout.</string>
+    <string name="progress_caption">Each line is a muscle group. Higher means more weight and reps than that group\'s first workout.</string>
     <string name="too_easy">Too easy</string>
     <string name="just_right">Just right</string>
     <string name="hard_but_good">Hard but good</string>
@@ -65,7 +67,7 @@
     <string name="focus_lower">Lower body</string>
     <string name="done_today">Done for today · %1$s</string>
     <string name="review_workout">Review workout</string>
-    <string name="main_lifts_empty">Your main lifts show up here after the first workout.</string>
+
     <string name="history_empty">Finished workouts show up here.</string>
     <string name="back">Back</string>
     <string name="bodyweight">Bodyweight</string>

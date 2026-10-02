@@ -15,6 +15,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.size
@@ -42,7 +44,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 
@@ -84,6 +89,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -132,6 +138,7 @@ import workout.domain.Experience
 import workout.domain.Goal
 import workout.domain.LimitTag
 import workout.domain.LoadType
+import workout.domain.MuscleLine
 import workout.domain.PlayMode
 import workout.domain.PlayStep
 import workout.domain.SessionRating
@@ -430,28 +437,7 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.main_lifts), style = MaterialTheme.typography.titleMedium)
-        if (model.best.isEmpty()) {
-            Text(stringResource(R.string.main_lifts_empty), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            model.best.forEach { lift ->
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(lift.name, modifier = Modifier.weight(1f))
-                        Text(lift.detail, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-            }
-        }
-    }
+    ProgressCard(model.progress)
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1232,6 +1218,134 @@ private fun AddExerciseDialog(
     }
 }
 
+private val muscleColors = mapOf(
+    "chest" to Color(0xFFE85D4C),
+    "shoulders" to Color(0xFFF0A202),
+    "middle back" to Color(0xFF7EB6FF),
+    "biceps" to Color(0xFFC77DFF),
+    "triceps" to Color(0xFFFF8AD4),
+    "abdominals" to Color(0xFFD6F25C),
+    "lower back" to Color(0xFF5B8CFF),
+    "glutes" to Color(0xFFFF6B8A),
+    "quadriceps" to Color(0xFF3DDC97),
+    "hamstrings" to Color(0xFF4ECDC4),
+    "calves" to Color(0xFFF2C14E),
+)
+
+private fun muscleColor(muscle: String): Color = muscleColors[muscle.lowercase()] ?: Color(0xFFB0B8A4)
+
+@Composable
+private fun ProgressCard(lines: List<MuscleLine>) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.progress_title), style = MaterialTheme.typography.titleMedium)
+            if (lines.isEmpty()) {
+                Text(
+                    stringResource(R.string.progress_empty),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    stringResource(R.string.progress_caption),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                ProgressChart(lines)
+                val dates = lines.flatMap { it.points }.map { it.date }.distinct().sorted()
+                if (dates.isNotEmpty()) {
+                    val format = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(
+                            dates.first().format(format),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                        if (dates.size > 1) {
+                            Text(
+                                dates.last().format(format),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
+                }
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    lines.forEach { line ->
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(muscleColor(line.muscle)),
+                            )
+                            Text(muscleLabel(line.muscle), style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressChart(lines: List<MuscleLine>) {
+    val dates = lines.flatMap { it.points }.map { it.date }.distinct().sorted()
+    Canvas(Modifier.fillMaxWidth().height(168.dp)) {
+        if (dates.isNotEmpty()) {
+            val padX = 8.dp.toPx()
+            val padY = 14.dp.toPx()
+            val maxLevel = lines.maxOf { line -> line.points.maxOf { it.level } }.coerceAtLeast(1.0)
+            val top = maxLevel * 1.15
+            val start = dates.first().toEpochDay()
+            val span = (dates.last().toEpochDay() - start).coerceAtLeast(1)
+            fun xOf(date: LocalDate): Float {
+                if (dates.size == 1) return size.width / 2f
+                val along = (date.toEpochDay() - start).toFloat() / span.toFloat()
+                return padX + (size.width - padX * 2) * along
+            }
+            fun yOf(level: Double): Float {
+                val plot = size.height - padY * 2
+                return size.height - padY - (level / top).toFloat() * plot
+            }
+            if (maxLevel > 1.05) {
+                val base = yOf(1.0)
+                drawLine(
+                    Color.White.copy(alpha = 0.18f),
+                    Offset(padX, base),
+                    Offset(size.width - padX, base),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            lines.forEach { line ->
+                val color = muscleColor(line.muscle)
+                val points = line.points.map { Offset(xOf(it.date), yOf(it.level)) }
+                for (index in 0 until points.lastIndex) {
+                    drawLine(
+                        color,
+                        points[index],
+                        points[index + 1],
+                        strokeWidth = 3.dp.toPx(),
+                        cap = StrokeCap.Round,
+                    )
+                }
+                points.forEach { center ->
+                    drawCircle(color, radius = 4.5.dp.toPx(), center = center)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun muscleLabel(muscle: String): String {
     val res = when (muscle) {
@@ -1506,6 +1620,17 @@ private fun WorkStep(
                         Text(stringResource(R.string.main_lift_badge), color = MaterialTheme.colorScheme.primary)
                     }
                 }
+                LinearProgressIndicator(
+                    progress = { workoutFraction(model, work) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(99.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    gapSize = 0.dp,
+                    drawStopIndicator = {},
+                )
                 ExercisePhotos(
                     exercise?.imageFiles.orEmpty(),
                     modifier = Modifier.weight(1f, fill = false).heightIn(max = 148.dp),
@@ -1685,12 +1810,28 @@ private fun FinishedSession(model: WorkoutViewModel, plan: workout.domain.Sessio
 
 @Composable
 private fun DumbbellPicker(owned: List<Double>, selected: Double?, onSelect: (Double) -> Unit) {
-    Row(
-        Modifier.horizontalScroll(rememberScrollState()),
+    val selectedIndex = owned.indexOfFirst { selected != null && abs(selected - it) < 0.05 }
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = selectedIndex.coerceAtLeast(0),
+    )
+    LaunchedEffect(selectedIndex, owned) {
+        if (selectedIndex >= 0) {
+            val info = listState.layoutInfo
+            val item = info.visibleItemsInfo.find { it.index == selectedIndex }
+            val fullyVisible = item != null &&
+                item.offset >= info.viewportStartOffset &&
+                item.offset + item.size <= info.viewportEndOffset
+            if (!fullyVisible) listState.scrollToItem(selectedIndex)
+        }
+    }
+    LazyRow(
+        state = listState,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(end = 8.dp),
     ) {
-        owned.forEach { kilograms ->
-            val picked = selected != null && abs(selected - kilograms) < 0.05
+        items(count = owned.size, key = { it }) { index ->
+            val kilograms = owned[index]
+            val picked = index == selectedIndex
             val label = "${trimKg(kilograms)} kg"
             if (picked) {
                 Button(onClick = { onSelect(kilograms) }) { Text(label) }
@@ -1699,6 +1840,13 @@ private fun DumbbellPicker(owned: List<Double>, selected: Double?, onSelect: (Do
             }
         }
     }
+}
+
+private fun workoutFraction(model: WorkoutViewModel, work: PlayStep.Work): Float {
+    val works = model.playSteps().filterIsInstance<PlayStep.Work>()
+    val place = works.indexOfFirst { it.exerciseIndex == work.exerciseIndex && it.setIndex == work.setIndex }
+    if (works.isEmpty() || place < 0) return 0f
+    return (place + 1f) / works.size
 }
 
 @Composable

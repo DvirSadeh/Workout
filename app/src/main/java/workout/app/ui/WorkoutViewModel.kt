@@ -20,7 +20,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import workout.app.R
 import workout.app.data.BackupCodec
-import workout.app.data.BestLift
+import workout.domain.MuscleLine
 import workout.app.data.DownloadsBackup
 import workout.app.data.HistoryEntry
 import workout.app.data.SetDraft
@@ -103,7 +103,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var profile by mutableStateOf<UserProfile?>(null)
         private set
-    var best by mutableStateOf<List<BestLift>>(emptyList())
+    var progress by mutableStateOf<List<MuscleLine>>(emptyList())
         private set
     var history by mutableStateOf<List<HistoryEntry>>(emptyList())
         private set
@@ -503,7 +503,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                 landOnFirstUndone()
             }
             history = repository.history()
-            best = repository.bestLifts()
+            progress = repository.progress()
             firstSession = history.isEmpty()
             scheduleBackup()
         }
@@ -555,6 +555,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
                     setsDirty = false
                     repository.replaceSets(plan, snapshot)
                 }
+                progress = repository.progress()
             }
         }
     }
@@ -655,7 +656,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         val built = session.getOrThrow()
         today = built
         profile = repository.profile()
-        best = repository.bestLifts()
+        progress = repository.progress()
         history = repository.history()
         firstSession = history.isEmpty()
         sets = repository.savedSets(built.plan)
