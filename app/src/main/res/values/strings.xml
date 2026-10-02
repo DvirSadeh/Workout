@@ -79,6 +79,7 @@
     <string name="harder_versions">Harder versions</string>
     <string name="use_this_today">Use this today</string>
     <string name="todays_version">This is today\'s version</string>
+    <string name="version_today">Today</string>
     <string name="minutes_value">%1$d min</string>
     <string name="could_not_build">Could not build today\'s workout.</string>
     <string name="photo">Exercise photo</string>

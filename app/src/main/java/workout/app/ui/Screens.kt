@@ -24,7 +24,13 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PageSize
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -73,6 +79,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1540,16 +1547,36 @@ private fun HistoryScreen(model: WorkoutViewModel) {
 @Composable
 private fun ExerciseScreen(model: WorkoutViewModel, id: String) {
     val exercise = model.catalog.find(id)
-    ScreenFrame(title = exercise?.name ?: id, onBack = model::back) {
-        if (exercise == null) return@ScreenFrame
-        HardnessChooser(model, exercise)
-        ExercisePhotos(exercise.imageFiles)
-        if (exercise.primaryMuscles.isNotEmpty()) {
-            Text(exercise.primaryMuscles.joinToString(", "))
-        }
-        Text(stringResource(R.string.how_to_title), style = MaterialTheme.typography.titleMedium)
-        exercise.instructions.forEachIndexed { index, step ->
-            Text("${index + 1}. $step")
+    Scaffold(containerColor = MaterialTheme.colorScheme.background) { padding ->
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .imePadding()
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            TextButton(onClick = model::back) { Text(stringResource(R.string.back)) }
+            Text(exercise?.name ?: id, style = MaterialTheme.typography.headlineMedium)
+            if (exercise != null) {
+                HardnessChooser(model, exercise)
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    ExercisePhotos(exercise.imageFiles)
+                    if (exercise.primaryMuscles.isNotEmpty()) {
+                        Text(exercise.primaryMuscles.joinToString(", "))
+                    }
+                    Text(stringResource(R.string.how_to_title), style = MaterialTheme.typography.titleMedium)
+                    exercise.instructions.forEachIndexed { index, step ->
+                        Text("${index + 1}. $step")
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
+            }
         }
     }
 }
@@ -1563,62 +1590,90 @@ private fun HardnessChooser(model: WorkoutViewModel, exercise: ProgrammedExercis
     val todayExercise = model.catalog.find(todayId) ?: return
     val eligible = model.profile?.let { profile -> model.catalog.eligible(profile).map { it.id }.toSet() }
     fun allowed(id: String) = id == todayExercise.id || eligible == null || id in eligible
-    val family = model.catalog.inFamily(exercise.familyId)
-    val easier = family.filter { it.tier < todayExercise.tier && allowed(it.id) }
-    val harder = family.filter { it.tier > todayExercise.tier && allowed(it.id) }
-    if (easier.isEmpty() && harder.isEmpty()) return
-    Text(stringResource(R.string.adjust_hardness), style = MaterialTheme.typography.titleMedium)
-    Text(
-        stringResource(R.string.hardness_help),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        style = MaterialTheme.typography.bodySmall,
-    )
-    if (easier.isNotEmpty()) {
-        Text(stringResource(R.string.easier_versions), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        easier.forEach { VersionChoice(model, it, today = false) }
+    val versions = model.catalog.inFamily(exercise.familyId).filter { allowed(it.id) }
+    if (versions.size < 2) return
+    key(exercise.familyId) {
+        VersionStrip(model, exercise.id, todayExercise.id, versions)
     }
-    VersionChoice(model, todayExercise, today = true)
-    if (harder.isNotEmpty()) {
-        Text(stringResource(R.string.harder_versions), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        harder.forEach { VersionChoice(model, it, today = false) }
+    if (exercise.id != todayExercise.id) {
+        Button(
+            onClick = { model.useThisToday(exercise.id) },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+        ) {
+            Text(stringResource(R.string.use_this_today))
+        }
     }
 }
 
 @Composable
-private fun VersionChoice(model: WorkoutViewModel, exercise: ProgrammedExercise, today: Boolean) {
-    val viewing = (model.screen as? Screen.Exercise)?.id == exercise.id
+private fun VersionStrip(
+    model: WorkoutViewModel,
+    viewingId: String,
+    todayId: String,
+    versions: List<ProgrammedExercise>,
+) {
+    val start = versions.indexOfFirst { it.id == viewingId }.coerceAtLeast(0)
+    val pagerState = rememberPagerState(initialPage = start, pageCount = { versions.size })
+    val scope = rememberCoroutineScope()
+    val pageWidth = 200.dp
+    LaunchedEffect(pagerState.settledPage) {
+        val chosen = versions.getOrNull(pagerState.settledPage)
+        if (chosen != null && chosen.id != viewingId) model.openExercise(chosen.id)
+    }
+    BoxWithConstraints(Modifier.fillMaxWidth().height(96.dp)) {
+        val side = ((maxWidth - pageWidth) / 2).coerceAtLeast(0.dp)
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = side),
+            pageSize = PageSize.Fixed(pageWidth),
+            pageSpacing = 8.dp,
+            snapPosition = SnapPosition.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) { page ->
+            val version = versions[page]
+            VersionChip(
+                name = version.name,
+                today = version.id == todayId,
+                viewing = page == pagerState.currentPage,
+                onSelect = { scope.launch { pagerState.animateScrollToPage(page) } },
+            )
+        }
+    }
+}
+
+@Composable
+private fun VersionChip(name: String, today: Boolean, viewing: Boolean, onSelect: () -> Unit) {
+    val background = when {
+        viewing -> MaterialTheme.colorScheme.primary
+        today -> MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val foreground = if (viewing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        onClick = onSelect,
+        modifier = Modifier.fillMaxSize(),
         shape = RoundedCornerShape(16.dp),
-        color = if (today) {
-            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant
-        },
+        color = background,
+        contentColor = foreground,
     ) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (today) {
-                Text(
-                    stringResource(R.string.todays_version),
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
-            Text(exercise.name, style = MaterialTheme.typography.titleMedium)
-            if (!today) {
-                Button(
-                    onClick = { model.useThisToday(exercise.id) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                ) {
-                    Text(stringResource(R.string.use_this_today))
-                }
-            }
-            if (!viewing) {
-                TextButton(onClick = { model.openExercise(exercise.id) }) {
-                    Text(stringResource(R.string.how_to))
-                }
-            }
+        Column(
+            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                if (today) stringResource(R.string.version_today) else "",
+                modifier = Modifier.height(20.dp),
+                color = if (viewing) foreground else MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
+            )
+            Text(
+                name,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium,
+            )
         }
     }
 }
