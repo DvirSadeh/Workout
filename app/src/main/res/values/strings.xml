@@ -18,8 +18,11 @@
     <string name="weight_graph_title">Weight</string>
     <string name="weight_graph_reading">Reading weight from Fit</string>
     <string name="weight_graph_latest">%1$s kg</string>
-    <string name="weight_graph_caption">From Fit, through Health Connect. The latest reading is the weight used for new workouts.</string>
-    <string name="weight_graph_outside">From Fit, through Health Connect. This reading is outside 35 to 250 kg, so your profile weight stays as it is.</string>
+    <string name="weight_graph_week">Week average %1$s kg</string>
+    <string name="weight_graph_day_label">Each day</string>
+    <string name="weight_graph_week_label">Week average</string>
+    <string name="weight_graph_caption">From Fit, through Health Connect. Dots are each day\'s weight. The line is that week\'s average. The latest day is the weight used for new workouts.</string>
+    <string name="weight_graph_outside">From Fit, through Health Connect. Dots are each day\'s weight. The line is that week\'s average. This reading is outside 35 to 250 kg, so your profile weight stays as it is.</string>
     <string name="weight_graph_sync">Sync weight from Fit</string>
     <string name="weight_graph_empty">No weight from Fit yet. In the Fit app, turn on sync with Health Connect, then add a weight.</string>
     <string name="weight_graph_update">Update Health Connect to read weight from Fit.</string>

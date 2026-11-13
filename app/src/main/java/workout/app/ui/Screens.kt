@@ -141,6 +141,7 @@ import workout.app.data.FitWeightStatus
 import workout.app.data.FitWeights
 import workout.app.data.TodaySession
 import workout.domain.BodyWeightPoint
+import workout.domain.BodyWeightSeries
 import workout.domain.DayFocus
 import workout.domain.Experience
 import workout.domain.Goal
@@ -1422,11 +1423,19 @@ private fun WeightCard(model: WorkoutViewModel) {
                             Text(stringResource(R.string.weight_graph_retry))
                         }
                     } else {
+                        val weeks = remember(points) { BodyWeightSeries.weekAverage(points) }
                         val latest = points.last().kilograms
                         Text(
                             stringResource(R.string.weight_graph_latest, trimKg(latest)),
                             style = MaterialTheme.typography.headlineSmall,
                         )
+                        weeks.lastOrNull()?.let { week ->
+                            Text(
+                                stringResource(R.string.weight_graph_week, trimKg(week.kilograms)),
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
                         Text(
                             stringResource(
                                 if (latest in 35.0..250.0) {
@@ -1438,7 +1447,36 @@ private fun WeightCard(model: WorkoutViewModel) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        WeightChart(points)
+                        WeightChart(points, weeks)
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(10.dp)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.onSurfaceVariant),
+                                )
+                                Text(stringResource(R.string.weight_graph_day_label), style = MaterialTheme.typography.labelLarge)
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(width = 16.dp, height = 3.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(MaterialTheme.colorScheme.primary),
+                                )
+                                Text(stringResource(R.string.weight_graph_week_label), style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
                         val format = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(
@@ -1462,22 +1500,24 @@ private fun WeightCard(model: WorkoutViewModel) {
 }
 
 @Composable
-private fun WeightChart(points: List<BodyWeightPoint>) {
-    val line = MaterialTheme.colorScheme.primary
+private fun WeightChart(days: List<BodyWeightPoint>, weeks: List<BodyWeightPoint>) {
+    val average = MaterialTheme.colorScheme.primary
+    val exact = MaterialTheme.colorScheme.onSurfaceVariant
     Canvas(Modifier.fillMaxWidth().height(168.dp)) {
-        if (points.isEmpty()) return@Canvas
+        if (days.isEmpty()) return@Canvas
         val padX = 8.dp.toPx()
         val padY = 14.dp.toPx()
-        val minKg = points.minOf { it.kilograms }
-        val maxKg = points.maxOf { it.kilograms }
+        val samples = days + weeks
+        val minKg = samples.minOf { it.kilograms }
+        val maxKg = samples.maxOf { it.kilograms }
         val padKg = ((maxKg - minKg) * 0.2).coerceAtLeast(0.5)
         val low = minKg - padKg
         val high = maxKg + padKg
-        val start = points.first().date.toEpochDay()
-        val span = (points.last().date.toEpochDay() - start).coerceAtLeast(1)
-        fun xOf(index: Int): Float {
-            if (points.size == 1) return size.width / 2f
-            val along = (points[index].date.toEpochDay() - start).toFloat() / span.toFloat()
+        val start = days.first().date.toEpochDay()
+        val span = (days.last().date.toEpochDay() - start).coerceAtLeast(1)
+        fun xOf(date: LocalDate): Float {
+            if (days.size == 1) return size.width / 2f
+            val along = (date.toEpochDay() - start).toFloat() / span.toFloat()
             return padX + (size.width - padX * 2) * along
         }
         fun yOf(kilograms: Double): Float {
@@ -1485,12 +1525,12 @@ private fun WeightChart(points: List<BodyWeightPoint>) {
             val along = ((kilograms - low) / (high - low)).toFloat()
             return size.height - padY - along * plot
         }
-        val drawn = points.mapIndexed { index, point -> Offset(xOf(index), yOf(point.kilograms)) }
-        for (index in 0 until drawn.lastIndex) {
-            drawLine(line, drawn[index], drawn[index + 1], strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+        val trend = weeks.map { Offset(xOf(it.date), yOf(it.kilograms)) }
+        for (index in 0 until trend.lastIndex) {
+            drawLine(average, trend[index], trend[index + 1], strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
         }
-        drawn.forEach { center ->
-            drawCircle(line, radius = 4.5.dp.toPx(), center = center)
+        days.forEach { day ->
+            drawCircle(exact, radius = 4.5.dp.toPx(), center = Offset(xOf(day.date), yOf(day.kilograms)))
         }
     }
 }

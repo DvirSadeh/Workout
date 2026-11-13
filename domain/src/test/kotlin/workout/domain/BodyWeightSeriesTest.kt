@@ -52,4 +52,24 @@ class BodyWeightSeriesTest {
         assertEquals(LocalDate.of(2026, 11, 1), points.single().date)
         assertEquals(77.5, points.single().kilograms)
     }
+
+    @Test
+    fun weekAverageIsTheMeanOfEachMondayWeek() {
+        val monday = LocalDate.of(2026, 11, 2)
+        val points = listOf(
+            BodyWeightPoint(monday, 80.0),
+            BodyWeightPoint(monday.plusDays(2), 82.2),
+            BodyWeightPoint(monday.plusDays(7), 78.0),
+        )
+        val weeks = BodyWeightSeries.weekAverage(points)
+        assertEquals(listOf(monday.plusDays(2), monday.plusDays(7)), weeks.map { it.date })
+        assertEquals(listOf(81.1, 78.0), weeks.map { it.kilograms })
+    }
+
+    @Test
+    fun aSingleDayIsItsOwnWeekAverage() {
+        val day = LocalDate.of(2026, 11, 4)
+        val points = listOf(BodyWeightPoint(day, 76.4))
+        assertEquals(points, BodyWeightSeries.weekAverage(points))
+    }
 }

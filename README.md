@@ -4,7 +4,7 @@ Android app for dumbbell and bodyweight sessions.
 
 Opening the app does not create a workout. On the home screen, describe what you need and tap Generate workout. After a finished session, that same box plans the next day.
 
-The weight graph reads body weight from Health Connect. Google Fit writes weight there when Fit sync with Health Connect is on. The latest reading is the weight used for a new workout.
+The weight graph reads body weight from Health Connect. Google Fit writes weight there when Fit sync with Health Connect is on. Dots are each day's weight. The line is that week's average. The latest day is the weight used for a new workout.
 
 ## Install
 

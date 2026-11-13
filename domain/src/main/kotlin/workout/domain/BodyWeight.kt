@@ -1,8 +1,10 @@
 package workout.domain
 
+import java.time.DayOfWeek
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
+import kotlin.math.round
 
 data class BodyWeightPoint(val date: LocalDate, val kilograms: Double)
 
@@ -24,5 +26,22 @@ object BodyWeightSeries {
         return latest.entries
             .sortedBy { it.key }
             .map { (date, reading) -> BodyWeightPoint(date, reading.second) }
+    }
+
+    /**
+     * One point per Monday–Sunday week: the mean of that week's daily weights,
+     * rounded to a tenth of a kilogram, on the last day that week was weighed.
+     */
+    fun weekAverage(points: List<BodyWeightPoint>): List<BodyWeightPoint> {
+        if (points.isEmpty()) return emptyList()
+        return points
+            .groupBy { it.date.with(DayOfWeek.MONDAY) }
+            .entries
+            .sortedBy { it.key }
+            .map { (_, week) ->
+                val ordered = week.sortedBy { it.date }
+                val mean = ordered.sumOf { it.kilograms } / ordered.size
+                BodyWeightPoint(ordered.last().date, round(mean * 10.0) / 10.0)
+            }
     }
 }
