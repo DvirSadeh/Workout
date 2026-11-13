@@ -1,17 +1,15 @@
 # Workout
 
-Web app exported from Grok App Builder. TanStack Start, React 19, Vite, and Tailwind CSS.
+Android app for dumbbell and bodyweight sessions.
 
-## Run locally
+Opening the app does not create a workout. On the home screen, describe what you need and tap Generate workout. After a finished session, that same box plans the next day.
+
+## Install
+
+Connect the phone with USB debugging on, then:
 
 ```bash
-npm install
-npm run dev
+./gradlew assembleDebug
 ```
 
-The dev server listens on port 8080.
-
-## Notes
-
-- `node_modules` is not committed. Install dependencies with `npm install`.
-- The live-preview OAuth client secret was removed from `src/lib/auth/preview.ts` because this repository is public. Deployed auth uses `GROK_AUTH_CLIENT_SECRET` from the environment instead.
+The debug build installs on each connected phone. Emulators are skipped. The package id is `workout.app`.
