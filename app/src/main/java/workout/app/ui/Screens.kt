@@ -69,6 +69,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -131,8 +132,15 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.health.connect.client.PermissionController
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import workout.app.R
+import workout.app.data.FitWeightStatus
+import workout.app.data.FitWeights
 import workout.app.data.TodaySession
+import workout.domain.BodyWeightPoint
 import workout.domain.DayFocus
 import workout.domain.Experience
 import workout.domain.Goal
@@ -162,6 +170,14 @@ fun WorkoutApp(model: WorkoutViewModel) {
         if (uri != null) model.stageBackupFile(context, uri)
     }
     val import = { importLauncher.launch(arrayOf("application/json", "text/plain", "*/*")) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) model.refreshBodyWeight()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     BackHandler(enabled = model.importReady || model.canGoBack) {
         if (model.importReady) model.cancelImport() else model.back()
     }
@@ -544,6 +560,7 @@ private fun HomeLibrary(model: WorkoutViewModel, today: LocalDate) {
             }
         }
 
+    WeightCard(model)
     ProgressCard(model.progress)
 
     Surface(
@@ -1340,6 +1357,143 @@ private val muscleColors = mapOf(
 )
 
 private fun muscleColor(muscle: String): Color = muscleColors[muscle.lowercase()] ?: Color(0xFFB0B8A4)
+
+@Composable
+private fun WeightCard(model: WorkoutViewModel) {
+    val launcher = rememberLauncherForActivityResult(
+        PermissionController.createRequestPermissionResultContract(),
+    ) {
+        model.refreshBodyWeight()
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.weight_graph_title), style = MaterialTheme.typography.titleMedium)
+            when (val status = model.fitStatus) {
+                null -> Text(
+                    stringResource(R.string.weight_graph_reading),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                FitWeightStatus.NEED_PERMISSION -> {
+                    Text(
+                        stringResource(R.string.weight_graph_empty),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = { launcher.launch(FitWeights.permissions) },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Text(stringResource(R.string.weight_graph_sync))
+                    }
+                }
+                FitWeightStatus.NEED_UPDATE -> {
+                    Text(stringResource(R.string.weight_graph_update))
+                    OutlinedButton(
+                        onClick = model::openHealthConnectUpdate,
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Text(stringResource(R.string.weight_graph_update_action))
+                    }
+                }
+                FitWeightStatus.UNAVAILABLE -> Text(
+                    stringResource(R.string.weight_graph_unavailable),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                FitWeightStatus.FAILED -> {
+                    Text(stringResource(R.string.weight_graph_failed))
+                    TextButton(onClick = model::refreshBodyWeight) {
+                        Text(stringResource(R.string.weight_graph_retry))
+                    }
+                }
+                FitWeightStatus.READY -> {
+                    val points = model.bodyWeight
+                    if (points.isEmpty()) {
+                        Text(
+                            stringResource(R.string.weight_graph_empty),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        TextButton(onClick = model::refreshBodyWeight) {
+                            Text(stringResource(R.string.weight_graph_retry))
+                        }
+                    } else {
+                        val latest = points.last().kilograms
+                        Text(
+                            stringResource(R.string.weight_graph_latest, trimKg(latest)),
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                        Text(
+                            stringResource(
+                                if (latest in 35.0..250.0) {
+                                    R.string.weight_graph_caption
+                                } else {
+                                    R.string.weight_graph_outside
+                                },
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        WeightChart(points)
+                        val format = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(
+                                points.first().date.format(format),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                            if (points.size > 1) {
+                                Text(
+                                    points.last().date.format(format),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WeightChart(points: List<BodyWeightPoint>) {
+    val line = MaterialTheme.colorScheme.primary
+    Canvas(Modifier.fillMaxWidth().height(168.dp)) {
+        if (points.isEmpty()) return@Canvas
+        val padX = 8.dp.toPx()
+        val padY = 14.dp.toPx()
+        val minKg = points.minOf { it.kilograms }
+        val maxKg = points.maxOf { it.kilograms }
+        val padKg = ((maxKg - minKg) * 0.2).coerceAtLeast(0.5)
+        val low = minKg - padKg
+        val high = maxKg + padKg
+        val start = points.first().date.toEpochDay()
+        val span = (points.last().date.toEpochDay() - start).coerceAtLeast(1)
+        fun xOf(index: Int): Float {
+            if (points.size == 1) return size.width / 2f
+            val along = (points[index].date.toEpochDay() - start).toFloat() / span.toFloat()
+            return padX + (size.width - padX * 2) * along
+        }
+        fun yOf(kilograms: Double): Float {
+            val plot = size.height - padY * 2
+            val along = ((kilograms - low) / (high - low)).toFloat()
+            return size.height - padY - along * plot
+        }
+        val drawn = points.mapIndexed { index, point -> Offset(xOf(index), yOf(point.kilograms)) }
+        for (index in 0 until drawn.lastIndex) {
+            drawLine(line, drawn[index], drawn[index + 1], strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+        }
+        drawn.forEach { center ->
+            drawCircle(line, radius = 4.5.dp.toPx(), center = center)
+        }
+    }
+}
 
 @Composable
 private fun ProgressCard(lines: List<MuscleLine>) {

@@ -20,6 +20,10 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import workout.app.R
 import workout.app.data.BackupCodec
+import workout.app.data.FitWeightReading
+import workout.app.data.FitWeightStatus
+import workout.app.data.FitWeights
+import workout.domain.BodyWeightPoint
 import workout.domain.MuscleLine
 import workout.app.data.DownloadsBackup
 import workout.app.data.HistoryEntry
@@ -104,6 +108,10 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
     var profile by mutableStateOf<UserProfile?>(null)
         private set
     var progress by mutableStateOf<List<MuscleLine>>(emptyList())
+        private set
+    var bodyWeight by mutableStateOf<List<BodyWeightPoint>>(emptyList())
+        private set
+    var fitStatus by mutableStateOf<FitWeightStatus?>(null)
         private set
     var history by mutableStateOf<List<HistoryEntry>>(emptyList())
         private set
@@ -228,6 +236,15 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     fun retry() {
         viewModelScope.launch { loadHome(replaceStack = false) }
+    }
+
+    fun refreshBodyWeight() {
+        if (!::repository.isInitialized) return
+        viewModelScope.launch { loadBodyWeight() }
+    }
+
+    fun openHealthConnectUpdate() {
+        FitWeights(getApplication()).openProviderUpdate()
     }
 
     fun onWorkoutRequest(value: String) {
@@ -721,11 +738,30 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         upcoming = repository.upcoming()
         profile = repository.profile()
         progress = repository.progress()
+        loadBodyWeight()
         history = repository.history()
         firstSession = history.isEmpty()
         sets = if (built == null) emptyList() else repository.savedSets(built.plan)
         busy = false
         status = null
+    }
+
+    private suspend fun loadBodyWeight() {
+        val reading = runCatching { repository.syncBodyWeight() }.getOrElse {
+            FitWeightReading(FitWeightStatus.FAILED, emptyList())
+        }
+        if (reading.status == FitWeightStatus.FAILED && bodyWeight.isNotEmpty()) return
+        bodyWeight = reading.points
+        fitStatus = reading.status
+        val latest = reading.points.lastOrNull()?.kilograms ?: return
+        val wrote = runCatching { repository.rememberBodyWeight(latest) }.getOrDefault(false)
+        if (!wrote) return
+        val fresh = runCatching { repository.profile() }.getOrNull() ?: return
+        val previous = profile
+        profile = fresh
+        if (screen == Screen.Profile && previous != null && form.weight == trimKg(previous.weightKg)) {
+            form = form.copy(weight = trimKg(fresh.weightKg))
+        }
     }
 
     private suspend fun resumeUnfinishedSession() {

@@ -2,6 +2,8 @@ package workout.app.data
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import workout.app.coach.CoachClient
 import workout.domain.AdjustmentDirection
@@ -18,6 +20,7 @@ import workout.domain.Training
 import workout.domain.TrainingProgress
 import workout.domain.UserProfile
 import java.time.LocalDate
+import kotlin.math.abs
 
 data class TodaySession(
     val plan: SessionPlan,
@@ -40,6 +43,8 @@ class WorkoutRepository(
 ) {
     private val appContext = context.applicationContext
     private val dao = WorkoutDatabase.create(appContext, databaseName).dao()
+    private val profileWrites = Mutex()
+    private val fitWeights = FitWeights(appContext)
     private val keys = KeyStore(appContext)
     private val coach = CoachClient()
     private val drive = DriveClient()
@@ -47,20 +52,35 @@ class WorkoutRepository(
 
     suspend fun profile(): UserProfile? = withContext(Dispatchers.IO) { dao.profile()?.toProfile() }
 
-    suspend fun saveProfile(profile: UserProfile) = withContext(Dispatchers.IO) {
-        val existing = dao.profile()
-        val stored = if (existing == null) {
-            profile
-        } else {
-            profile.copy(trainingStart = LocalDate.parse(existing.trainingStart))
+    suspend fun saveProfile(profile: UserProfile) = profileWrites.withLock {
+        withContext(Dispatchers.IO) {
+            val existing = dao.profile()
+            val stored = if (existing == null) {
+                profile
+            } else {
+                profile.copy(trainingStart = LocalDate.parse(existing.trainingStart))
+            }
+            dao.saveProfile(stored.toEntity())
+            val today = LocalDate.now().toString()
+            val open = dao.session(today)
+            if (open != null && !open.completed) {
+                dao.deleteOpenSession(today)
+                dao.deleteSets(today)
+                dao.deleteAdjustments(today)
+            }
         }
-        dao.saveProfile(stored.toEntity())
-        val today = LocalDate.now().toString()
-        val open = dao.session(today)
-        if (open != null && !open.completed) {
-            dao.deleteOpenSession(today)
-            dao.deleteSets(today)
-            dao.deleteAdjustments(today)
+    }
+
+    suspend fun syncBodyWeight(): FitWeightReading = fitWeights.read()
+
+    /** Updates the stored kilograms only. Does not discard an unstarted session. */
+    suspend fun rememberBodyWeight(kilograms: Double): Boolean = profileWrites.withLock {
+        withContext(Dispatchers.IO) {
+            if (!kilograms.isFinite() || kilograms !in 35.0..250.0) return@withContext false
+            val existing = dao.profile() ?: return@withContext false
+            if (abs(existing.weightKg - kilograms) < 0.05) return@withContext false
+            dao.saveProfile(existing.copy(weightKg = kilograms))
+            true
         }
     }
 
