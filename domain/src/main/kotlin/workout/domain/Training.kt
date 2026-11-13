@@ -23,6 +23,38 @@ object Training {
         return if (prior == null || prior.focus == DayFocus.LOWER) DayFocus.UPPER else DayFocus.LOWER
     }
 
+    fun focusFrom(exercises: List<ProgrammedExercise>): DayFocus {
+        val lowerPatterns = setOf(MovementPattern.SQUAT, MovementPattern.HINGE, MovementPattern.LUNGE)
+        val upperPatterns = setOf(
+            MovementPattern.HORIZONTAL_PUSH,
+            MovementPattern.VERTICAL_PUSH,
+            MovementPattern.HORIZONTAL_PULL,
+        )
+        var lower = 0
+        var upper = 0
+        exercises.forEach { exercise ->
+            when (exercise.pattern) {
+                in lowerPatterns -> lower += 1
+                in upperPatterns -> upper += 1
+                else -> {
+                    val muscles = exercise.primaryMuscles.joinToString(" ") { it.lowercase() }
+                    when {
+                        muscles.contains("quad") || muscles.contains("hamstring") ||
+                            muscles.contains("glute") || muscles.contains("calf") -> lower += 1
+                        muscles.contains("chest") || muscles.contains("shoulder") ||
+                            muscles.contains("bicep") || muscles.contains("tricep") ||
+                            muscles.contains("back") -> upper += 1
+                    }
+                }
+            }
+        }
+        return when {
+            lower == 0 && upper > 0 -> DayFocus.UPPER
+            upper == 0 && lower > 0 -> DayFocus.LOWER
+            else -> DayFocus.FULL_BODY
+        }
+    }
+
     fun dose(profile: UserProfile, today: LocalDate): Dose {
         val (low, high, restBase) = when (profile.goal) {
             Goal.FIT -> Triple(8, 15, 60)

@@ -137,6 +137,10 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var todayPlanOpen by mutableStateOf(false)
         private set
+    var upcoming by mutableStateOf<TodaySession?>(null)
+        private set
+    var workoutRequest by mutableStateOf("")
+        private set
     var pendingRemoval by mutableStateOf<PendingRemoval?>(null)
         private set
     var undoUntil by mutableLongStateOf(0L)
@@ -224,6 +228,65 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     fun retry() {
         viewModelScope.launch { loadHome(replaceStack = false) }
+    }
+
+    fun onWorkoutRequest(value: String) {
+        workoutRequest = value.take(500)
+    }
+
+    fun generateWorkout() {
+        val request = workoutRequest.trim()
+        if (request.isEmpty() || busy) return
+        val resources = getApplication<Application>()
+        viewModelScope.launch {
+            busy = true
+            status = resources.getString(R.string.generating)
+            val forLater = today?.completed == true
+            val result = runCatching { repository.generate(request, forLater) }
+            if (result.isFailure) {
+                busy = false
+                status = result.exceptionOrNull()?.message ?: resources.getString(R.string.could_not_build)
+                return@launch
+            }
+            val built = result.getOrThrow()
+            if (built == null) {
+                busy = false
+                status = resources.getString(R.string.coach_needs_key)
+                return@launch
+            }
+            workoutRequest = ""
+            status = null
+            if (forLater) {
+                upcoming = built
+            } else {
+                today = built
+                sets = repository.savedSets(built.plan)
+            }
+            busy = false
+            scheduleBackup()
+        }
+    }
+
+    fun planDifferentWorkout() {
+        val session = today ?: return
+        if (session.completed || sets.any { row -> row.any { it.done } }) return
+        viewModelScope.launch {
+            gate.withLock { repository.discardUnstarted(session.plan.date) }
+            today = null
+            sets = emptyList()
+            status = null
+            scheduleBackup()
+        }
+    }
+
+    fun replaceUpcoming() {
+        val session = upcoming ?: return
+        viewModelScope.launch {
+            gate.withLock { repository.discardUnstarted(session.plan.date) }
+            upcoming = null
+            status = null
+            scheduleBackup()
+        }
     }
 
     fun openProfile() {
@@ -640,7 +703,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun loadHome(replaceStack: Boolean) {
         busy = true
-        status = getApplication<Application>().getString(R.string.building)
+        status = getApplication<Application>().getString(R.string.loading)
         if (replaceStack) {
             backStack.clear()
             backStack.add(Screen.Home)
@@ -655,11 +718,12 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         }
         val built = session.getOrThrow()
         today = built
+        upcoming = repository.upcoming()
         profile = repository.profile()
         progress = repository.progress()
         history = repository.history()
         firstSession = history.isEmpty()
-        sets = repository.savedSets(built.plan)
+        sets = if (built == null) emptyList() else repository.savedSets(built.plan)
         busy = false
         status = null
     }

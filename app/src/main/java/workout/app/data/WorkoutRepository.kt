@@ -75,23 +75,48 @@ class WorkoutRepository(
 
     fun saveApiKey(value: String) = keys.write(accountId, value)
 
-    suspend fun today(): TodaySession = withContext(Dispatchers.IO) {
+    suspend fun today(): TodaySession? = withContext(Dispatchers.IO) {
+        dao.profile()?.toProfile() ?: error("Profile missing")
+        val existing = dao.session(LocalDate.now().toString()) ?: return@withContext null
+        toToday(existing)
+    }
+
+    suspend fun upcoming(): TodaySession? = withContext(Dispatchers.IO) {
+        val today = LocalDate.now().toString()
+        val existing = dao.sessions()
+            .filter { it.date > today && !it.completed }
+            .minByOrNull { it.date }
+            ?: return@withContext null
+        toToday(existing)
+    }
+
+    suspend fun generate(request: String, upcoming: Boolean): TodaySession? = withContext(Dispatchers.IO) {
+        val asked = request.trim()
+        if (asked.isEmpty()) error("Describe the workout first.")
         val profile = dao.profile()?.toProfile() ?: error("Profile missing")
+        if (apiKey().isBlank()) return@withContext null
         val today = LocalDate.now()
-        val existing = dao.session(today.toString())
-        if (existing != null) {
-            return@withContext TodaySession(
-                plan = parsePlan(existing.planJson),
-                headline = headline(existing.source, apiKey()),
-                completed = existing.completed,
-                rating = existing.rating?.let { SessionRating.valueOf(it) },
-            )
+        val sessions = dao.sessions()
+        val todaySession = sessions.find { it.date == today.toString() }
+        val date = if (upcoming || todaySession?.completed == true) {
+            nextOpenDate(today, sessions)
+        } else {
+            today
         }
-        val history = historyRecords(today)
-        val built = build(profile, history, today)
+        val existing = sessions.find { it.date == date.toString() }
+        if (existing?.completed == true) error("That day already has a finished workout.")
+        if (existing != null && dao.sets(date.toString()).any { it.completed }) {
+            error("That workout is already started.")
+        }
+        if (existing != null) {
+            dao.deleteOpenSession(date.toString())
+            dao.deleteSets(date.toString())
+            dao.deleteAdjustments(date.toString())
+        }
+        val built = build(profile, historyRecords(date), date, asked)
         dao.saveSession(
             SessionEntity(
-                date = today.toString(),
+                date = date.toString(),
                 rating = null,
                 source = built.plan.source.name,
                 note = built.plan.note,
@@ -101,6 +126,16 @@ class WorkoutRepository(
             ),
         )
         built
+    }
+
+    suspend fun discardUnstarted(date: LocalDate) = withContext(Dispatchers.IO) {
+        val key = date.toString()
+        val existing = dao.session(key) ?: return@withContext
+        if (existing.completed) return@withContext
+        if (dao.sets(key).any { it.completed }) return@withContext
+        dao.deleteOpenSession(key)
+        dao.deleteSets(key)
+        dao.deleteAdjustments(key)
     }
 
     suspend fun adjust(
@@ -255,25 +290,30 @@ class WorkoutRepository(
         TrainingProgress.lines(records) { id -> catalog.find(id)?.primaryMuscles.orEmpty() }
     }
 
-    private suspend fun build(profile: UserProfile, history: List<SessionRecord>, today: LocalDate): TodaySession {
+    private suspend fun build(
+        profile: UserProfile,
+        history: List<SessionRecord>,
+        today: LocalDate,
+        athleteRequest: String,
+    ): TodaySession {
         val fallback = Planner.fallbackPlan(profile, catalog, history, today)
         val key = apiKey()
-        if (key.isBlank()) {
-            return TodaySession(fallback, appContext.getString(workout.app.R.string.coach_needs_key))
-        }
         val prompt = appContext.assets.open("coach_prompt.md").bufferedReader().use { it.readText() }
-        val request = Planner.prepareCoachRequest(prompt, profile, catalog, history, today)
+        val request = Planner.prepareCoachRequest(prompt, profile, catalog, history, today, athleteRequest)
         val first = runCatching { coach.propose(key, request, profile, catalog, today) }.getOrNull()
-            ?.copy(focus = Training.focus(profile, history, today))
+            ?.let { shaped(it, profile, history, today, athleteRequest) }
         val accepted = when {
             first == null -> null
-            Planner.checkPlan(first, profile, catalog, history, today).isEmpty() -> first
+            Planner.checkPlan(first, profile, catalog, history, today, requested = true).isEmpty() -> first
             else -> {
-                val reasons = Planner.checkPlan(first, profile, catalog, history, today).map { it.message }
+                val reasons = Planner.checkPlan(first, profile, catalog, history, today, requested = true)
+                    .map { it.message }
                 val repaired = runCatching {
                     coach.propose(key, request, profile, catalog, today, reasons)
-                }.getOrNull()?.copy(focus = Training.focus(profile, history, today))
-                repaired?.takeIf { Planner.checkPlan(it, profile, catalog, history, today).isEmpty() }
+                }.getOrNull()?.let { shaped(it, profile, history, today, athleteRequest) }
+                repaired?.takeIf {
+                    Planner.checkPlan(it, profile, catalog, history, today, requested = true).isEmpty()
+                }
             }
         }
         return if (accepted != null) {
@@ -281,6 +321,38 @@ class WorkoutRepository(
         } else {
             TodaySession(fallback, appContext.getString(workout.app.R.string.coach_unavailable))
         }
+    }
+
+    private fun shaped(
+        plan: SessionPlan,
+        profile: UserProfile,
+        history: List<SessionRecord>,
+        today: LocalDate,
+        athleteRequest: String,
+    ): SessionPlan {
+        if (athleteRequest.isBlank()) return plan.copy(focus = Training.focus(profile, history, today))
+        val programmed = plan.exercises.mapNotNull { catalog.find(it.exerciseId) }
+        val focus = if (programmed.isEmpty()) plan.focus else Training.focusFrom(programmed)
+        return plan.copy(focus = focus)
+    }
+
+    private fun toToday(existing: SessionEntity): TodaySession = TodaySession(
+        plan = parsePlan(existing.planJson),
+        headline = headline(existing.source, apiKey()),
+        completed = existing.completed,
+        rating = existing.rating?.let { SessionRating.valueOf(it) },
+    )
+
+    private suspend fun nextOpenDate(today: LocalDate, sessions: List<SessionEntity>): LocalDate {
+        val byDate = sessions.associateBy { it.date }
+        var day = today.plusDays(1)
+        repeat(14) {
+            val existing = byDate[day.toString()]
+            val started = existing != null && dao.sets(day.toString()).any { it.completed }
+            if (existing == null || (!existing.completed && !started)) return day
+            day = day.plusDays(1)
+        }
+        return day
     }
 
     private suspend fun historyRecords(today: LocalDate): List<SessionRecord> =

@@ -145,6 +145,7 @@ import workout.domain.SessionRating
 import workout.domain.Sex
 import workout.domain.PlannedExercise
 import workout.domain.ProgrammedExercise
+import workout.domain.Training
 import workout.domain.UserProfile
 import workout.domain.WorkoutSize
 import java.time.DayOfWeek
@@ -173,7 +174,7 @@ fun WorkoutApp(model: WorkoutViewModel) {
         return
     }
     when (val screen = model.screen) {
-        Screen.Loading -> LoadingScreen(model.status ?: stringResource(R.string.building))
+        Screen.Loading -> LoadingScreen(model.status ?: stringResource(R.string.loading))
         Screen.Onboarding -> ProfileScreen(model, onboarding = true, import)
         Screen.Home -> HomeScreen(model)
         Screen.Player -> PlayerScreen(model)
@@ -234,12 +235,106 @@ private fun HomeScreen(model: WorkoutViewModel) {
                 Text(dateText, style = MaterialTheme.typography.headlineSmall)
             }
             val session = model.today
-            if (model.busy || session == null) {
-                HomePending(model)
-            } else {
-                HomeReady(model, session, today)
+            when {
+                model.busy && session == null -> HomePending(model)
+                session == null -> RequestWorkout(model, next = false)
+                else -> HomeReady(model, session, today)
             }
+            if (session != null && session.completed) {
+                val upcoming = model.upcoming
+                if (upcoming != null) {
+                    UpcomingWorkout(model, upcoming)
+                } else {
+                    RequestWorkout(model, next = true)
+                }
+            }
+            HomeLibrary(model, today)
             Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun RequestWorkout(model: WorkoutViewModel, next: Boolean) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                stringResource(if (next) R.string.next_request_title else R.string.workout_request_title),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            OutlinedTextField(
+                value = model.workoutRequest,
+                onValueChange = model::onWorkoutRequest,
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.workout_request_hint)) },
+                minLines = 3,
+                enabled = !model.busy,
+            )
+            Button(
+                onClick = model::generateWorkout,
+                enabled = !model.busy && model.workoutRequest.isNotBlank(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                if (model.busy) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(22.dp),
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Text(stringResource(R.string.generate_workout), style = MaterialTheme.typography.titleMedium)
+                }
+            }
+            model.status?.let { message ->
+                Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun UpcomingWorkout(model: WorkoutViewModel, session: TodaySession) {
+    val plan = session.plan
+    val dateText = plan.date.format(DateTimeFormatter.ofPattern("EEEE, MMMM d", Locale.ENGLISH))
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                stringResource(R.string.next_workout_title),
+                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                stringResource(R.string.next_workout_ready, dateText),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(focusLabel(plan.focus), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            plan.exercises.forEach { planned ->
+                Text(model.catalog.find(planned.exerciseId)?.name ?: planned.exerciseId)
+            }
+            if (plan.note.isNotBlank()) {
+                Text(
+                    plan.note,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+            TextButton(onClick = model::replaceUpcoming, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.plan_different))
+            }
         }
     }
 }
@@ -258,7 +353,7 @@ private fun HomePending(model: WorkoutViewModel) {
         ) {
             if (model.busy) {
                 CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-                Text(model.status ?: stringResource(R.string.building))
+                Text(model.status ?: stringResource(R.string.loading))
             } else {
                 Text(model.status ?: stringResource(R.string.could_not_build))
                 Button(onClick = model::retry, modifier = Modifier.fillMaxWidth()) {
@@ -326,6 +421,11 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                 ) {
                     Text(stringResource(action), style = MaterialTheme.typography.titleMedium)
                 }
+                if (!session.completed && !started) {
+                    TextButton(onClick = model::planDifferentWorkout, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.plan_different))
+                    }
+                }
                 OutlinedButton(
                     onClick = model::toggleTodayPlan,
                     modifier = Modifier.fillMaxWidth(),
@@ -384,16 +484,24 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
         }
     }
 
-    model.profile?.let { profile ->
-        val weekStart = today.with(DayOfWeek.MONDAY)
-        val doneThisWeek = model.history.count { entry ->
-            !entry.date.isBefore(weekStart) && !entry.date.isAfter(today)
-        }
-        CalendarCard(
-            profile = profile,
-            blockIndex = plan.blockIndex,
-            weekInBlock = plan.weekInBlock,
-            deload = plan.deload,
+}
+
+@Composable
+private fun HomeLibrary(model: WorkoutViewModel, today: LocalDate) {
+    val profile = model.profile ?: return
+    val plan = model.today?.plan ?: model.upcoming?.plan
+    val blockIndex = plan?.blockIndex ?: Training.blockIndex(profile, today)
+    val weekInBlock = plan?.weekInBlock ?: Training.weekInBlock(profile, today)
+    val deload = plan?.deload ?: Training.dose(profile, today).deload
+    val weekStart = today.with(DayOfWeek.MONDAY)
+    val doneThisWeek = model.history.count { entry ->
+        !entry.date.isBefore(weekStart) && !entry.date.isAfter(today)
+    }
+    CalendarCard(
+        profile = profile,
+        blockIndex = blockIndex,
+        weekInBlock = weekInBlock,
+        deload = deload,
             today = today,
             trained = model.history.map { it.date }.toSet(),
             doneThisWeek = doneThisWeek,
@@ -435,7 +543,6 @@ private fun HomeReady(model: WorkoutViewModel, session: TodaySession, today: Loc
                 }
             }
         }
-    }
 
     ProgressCard(model.progress)
 

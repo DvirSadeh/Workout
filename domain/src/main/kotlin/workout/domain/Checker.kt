@@ -10,12 +10,10 @@ object Checker {
         catalog: Catalog,
         history: List<SessionRecord>,
         today: LocalDate,
+        requested: Boolean = false,
     ): List<Violation> {
         val violations = mutableListOf<Violation>()
         val dose = Training.dose(profile, today)
-        val focus = Training.focus(profile, history, today)
-        val block = Training.blockIndex(profile, today)
-        val slots = Training.slots(focus, dose.movementCount, block, profile.limits)
         val owned = Training.sortedOwned(profile)
         val memories = Signals.memories(catalog, history, today)
         val tooHard = Signals.effectiveTooHard(history, today)
@@ -24,8 +22,11 @@ object Checker {
         if (plan.date != today) {
             violations += Violation("date", "Plan date does not match today.")
         }
-        if (plan.focus != focus) {
-            violations += Violation("focus", "Plan focus is ${plan.focus} and today calls for $focus.")
+        if (!requested) {
+            val focus = Training.focus(profile, history, today)
+            if (plan.focus != focus) {
+                violations += Violation("focus", "Plan focus is ${plan.focus} and today calls for $focus.")
+            }
         }
         if (plan.deload != dose.deload) {
             violations += Violation("deload", "Deload flag does not match the training week.")
@@ -33,11 +34,19 @@ object Checker {
         if (plan.note.length < 40) {
             violations += Violation("note", "Coach note must be at least two sentences about this user.")
         }
-        if (plan.exercises.size !in (slots.size - 1)..(slots.size + 1)) {
-            violations += Violation(
-                "count",
-                "Session has ${plan.exercises.size} exercises and this day needs about ${slots.size}.",
-            )
+        if (requested) {
+            if (plan.exercises.size !in 2..8) {
+                violations += Violation("count", "A requested session needs 2 to 8 exercises.")
+            }
+        } else {
+            val focus = Training.focus(profile, history, today)
+            val slots = Training.slots(focus, dose.movementCount, Training.blockIndex(profile, today), profile.limits)
+            if (plan.exercises.size !in (slots.size - 1)..(slots.size + 1)) {
+                violations += Violation(
+                    "count",
+                    "Session has ${plan.exercises.size} exercises and this day needs about ${slots.size}.",
+                )
+            }
         }
         if (plan.exercises.map { it.exerciseId }.distinct().size != plan.exercises.size) {
             violations += Violation("duplicate", "An exercise appears twice in the session.")
@@ -64,30 +73,46 @@ object Checker {
                     violations += Violation("load", "${exercise.name} must use one of the owned dumbbells.")
                 }
             }
-            if (planned.sets != dose.sets) {
+            if (requested) {
+                if (planned.sets !in 1..6) {
+                    violations += Violation("sets", "${exercise.name} should be between 1 and 6 sets.")
+                }
+            } else if (planned.sets != dose.sets) {
                 violations += Violation("sets", "${exercise.name} should be ${dose.sets} sets.")
             }
             if (dose.deload) {
                 if (planned.repsLow != dose.repsLow || planned.repsHigh != dose.repsLow) {
                     violations += Violation("reps", "${exercise.name} should stay at ${dose.repsLow} reps on a deload.")
                 }
+            } else if (requested) {
+                if (planned.repsLow !in 3..30 || planned.repsHigh !in 3..30 || planned.repsLow > planned.repsHigh) {
+                    violations += Violation("reps", "${exercise.name} reps should sit between 3 and 30.")
+                }
             } else if (planned.repsLow < dose.repsLow || planned.repsHigh > dose.repsHigh || planned.repsLow > planned.repsHigh) {
                 violations += Violation("reps", "${exercise.name} reps sit outside ${dose.repsLow}-${dose.repsHigh}.")
             }
-            if (planned.restSeconds < dose.restSeconds || planned.restSeconds > dose.restSeconds + 30) {
+            if (requested) {
+                if (planned.restSeconds !in 20..240) {
+                    violations += Violation("rest", "${exercise.name} rest should sit between 20 and 240 seconds.")
+                }
+            } else if (planned.restSeconds < dose.restSeconds || planned.restSeconds > dose.restSeconds + 30) {
                 violations += Violation("rest", "${exercise.name} rest is outside the goal range.")
             }
             checkStep(planned, exercise, memories, owned, profile, violations)
         }
 
-        val assignment = assign(plan.exercises, slots, catalog)
-        if (assignment == null) {
-            violations += Violation("slots", "The exercises do not cover today's movement slots.")
-        } else {
-            checkLocks(assignment, slots, plan, catalog, profile, history, today, violations)
+        if (!requested) {
+            val focus = Training.focus(profile, history, today)
+            val slots = Training.slots(focus, dose.movementCount, Training.blockIndex(profile, today), profile.limits)
+            val assignment = assign(plan.exercises, slots, catalog)
+            if (assignment == null) {
+                violations += Violation("slots", "The exercises do not cover today's movement slots.")
+            } else {
+                checkLocks(assignment, slots, plan, catalog, profile, history, today, violations)
+            }
         }
 
-        if (!tooHard) {
+        if (!requested && !tooHard) {
             val recent = Signals.recentIds(history, today)
             plan.exercises.filter { !it.anchor }.forEach { planned ->
                 if (planned.exerciseId in recent) {
@@ -106,7 +131,7 @@ object Checker {
             }
         }
 
-        if (last?.rating == SessionRating.TOO_EASY && !tooHard) {
+        if (!requested && last?.rating == SessionRating.TOO_EASY && !tooHard) {
             val anchors = plan.exercises.filter { it.anchor }
             val anyProgress = anchors.any { planned ->
                 val exercise = catalog.find(planned.exerciseId) ?: return@any false
@@ -121,7 +146,7 @@ object Checker {
             }
         }
 
-        last?.adjustments?.forEach { adjustment ->
+        if (!requested) last?.adjustments?.forEach { adjustment ->
             val planned = plan.exercises.firstNotNullOfOrNull { item ->
                 val exercise = catalog.find(item.exerciseId) ?: return@firstNotNullOfOrNull null
                 if (exercise.familyId == adjustment.familyId) exercise to item else null

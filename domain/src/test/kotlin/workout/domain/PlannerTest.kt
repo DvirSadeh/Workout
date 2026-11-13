@@ -453,7 +453,33 @@ class PlannerTest {
         val request = Planner.prepareCoachRequest("Be a coach.", profile, catalog, emptyList(), start)
         assertTrue(request.payloadJson.contains("Bodyweight_Squat"))
         assertTrue(request.payloadJson.contains("\"deload\":false"))
+        assertTrue(request.payloadJson.contains("\"athleteRequest\":\"\""))
         assertEquals("Be a coach.", request.systemPrompt)
+    }
+
+    @Test
+    fun coachPayloadCarriesWhatTheyAskedFor() {
+        val request = Planner.prepareCoachRequest(
+            "Be a coach.",
+            profile(),
+            catalog,
+            emptyList(),
+            start,
+            "short upper body, no \"squats\"",
+        )
+        assertTrue(request.payloadJson.contains("short upper body, no \\\"squats\\\""))
+    }
+
+    @Test
+    fun requestedPlanMayLeaveTheScheduledSlots() {
+        val profile = profile()
+        val plan = Planner.fallbackPlan(profile, catalog, emptyList(), start)
+        val asked = plan.copy(
+            focus = DayFocus.UPPER,
+            exercises = plan.exercises.take(2),
+        )
+        assertTrue(Planner.checkPlan(asked, profile, catalog, emptyList(), start).isNotEmpty())
+        assertTrue(Planner.checkPlan(asked, profile, catalog, emptyList(), start, requested = true).isEmpty())
     }
 
     @Test

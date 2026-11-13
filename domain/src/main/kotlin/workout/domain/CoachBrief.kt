@@ -9,6 +9,7 @@ object CoachBrief {
         catalog: Catalog,
         history: List<SessionRecord>,
         today: LocalDate,
+        athleteRequest: String = "",
     ): CoachRequest {
         val dose = Training.dose(profile, today)
         val focus = Training.focus(profile, history, today)
@@ -20,6 +21,7 @@ object CoachBrief {
         val payload = buildString {
             append("{")
             field("today", json(today.toString()))
+            field("athleteRequest", json(athleteRequest.trim()))
             field("blockIndex", block.toString())
             field("weekInBlock", Training.weekInBlock(profile, today).toString())
             field("deload", dose.deload.toString())

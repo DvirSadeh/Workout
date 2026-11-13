@@ -9,7 +9,8 @@ object Planner {
         catalog: Catalog,
         history: List<SessionRecord>,
         today: LocalDate,
-    ): List<Violation> = Checker.checkPlan(plan, profile, catalog, history, today)
+        requested: Boolean = false,
+    ): List<Violation> = Checker.checkPlan(plan, profile, catalog, history, today, requested)
 
     fun fallbackPlan(
         profile: UserProfile,
@@ -64,5 +65,6 @@ object Planner {
         catalog: Catalog,
         history: List<SessionRecord>,
         today: LocalDate,
-    ): CoachRequest = CoachBrief.prepare(systemPrompt, profile, catalog, history, today)
+        athleteRequest: String = "",
+    ): CoachRequest = CoachBrief.prepare(systemPrompt, profile, catalog, history, today, athleteRequest)
 }
