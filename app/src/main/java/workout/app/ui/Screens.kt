@@ -22,6 +22,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +57,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
@@ -64,8 +69,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDefaults
+import androidx.compose.material3.SelectableDates
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -81,6 +88,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -126,6 +134,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.platform.LocalDensity
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -158,7 +167,9 @@ import workout.domain.Training
 import workout.domain.UserProfile
 import workout.domain.WorkoutSize
 import java.time.DayOfWeek
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
@@ -1424,6 +1435,18 @@ private fun WeightCard(model: WorkoutViewModel) {
                         }
                     } else {
                         val weeks = remember(points) { BodyWeightSeries.weekAverage(points) }
+                        val earliest = points.first().date
+                        val latestDate = points.last().date
+                        val start = if (model.weightStartEpoch == Long.MIN_VALUE) {
+                            earliest
+                        } else {
+                            LocalDate.ofEpochDay(model.weightStartEpoch).coerceIn(earliest, latestDate)
+                        }
+                        val visible = remember(points, start) {
+                            points.filter { !it.date.isBefore(start) }
+                        }
+                        val visibleWeeks = remember(visible) { BodyWeightSeries.weekAverage(visible) }
+                        var picking by remember { mutableStateOf(false) }
                         val latest = points.last().kilograms
                         Text(
                             stringResource(R.string.weight_graph_latest, trimKg(latest)),
@@ -1447,7 +1470,32 @@ private fun WeightCard(model: WorkoutViewModel) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall,
                         )
-                        WeightChart(points, weeks)
+                        Text(
+                            stringResource(R.string.weight_graph_range),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        WeightChart(
+                            days = visible,
+                            weeks = visibleWeeks,
+                            earliest = earliest,
+                            axisStart = start,
+                            axisEnd = latestDate,
+                            onStartChange = { model.setWeightGraphStart(it.coerceIn(earliest, latestDate)) },
+                            onPickStart = { picking = true },
+                        )
+                        if (picking) {
+                            WeightStartDialog(
+                                earliest = earliest,
+                                latest = latestDate,
+                                selected = start,
+                                onPick = {
+                                    model.setWeightGraphStart(it)
+                                    picking = false
+                                },
+                                onDismiss = { picking = false },
+                            )
+                        }
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -1478,15 +1526,24 @@ private fun WeightCard(model: WorkoutViewModel) {
                             }
                         }
                         val format = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
                             Text(
-                                points.first().date.format(format),
+                                start.format(format),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.labelSmall,
                             )
-                            if (points.size > 1) {
+                            if (start.isAfter(earliest)) {
+                                TextButton(onClick = { model.setWeightGraphStart(earliest) }) {
+                                    Text(stringResource(R.string.weight_graph_all))
+                                }
+                            }
+                            if (start != latestDate) {
                                 Text(
-                                    points.last().date.format(format),
+                                    latestDate.format(format),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.labelSmall,
                                 )
@@ -1500,10 +1557,53 @@ private fun WeightCard(model: WorkoutViewModel) {
 }
 
 @Composable
-private fun WeightChart(days: List<BodyWeightPoint>, weeks: List<BodyWeightPoint>) {
+private fun WeightChart(
+    days: List<BodyWeightPoint>,
+    weeks: List<BodyWeightPoint>,
+    earliest: LocalDate,
+    axisStart: LocalDate,
+    axisEnd: LocalDate,
+    onStartChange: (LocalDate) -> Unit,
+    onPickStart: () -> Unit,
+) {
     val average = MaterialTheme.colorScheme.primary
     val exact = MaterialTheme.colorScheme.onSurfaceVariant
-    Canvas(Modifier.fillMaxWidth().height(168.dp)) {
+    val startRef = rememberUpdatedState(axisStart)
+    val earliestRef = rememberUpdatedState(earliest)
+    val endRef = rememberUpdatedState(axisEnd)
+    val changeRef = rememberUpdatedState(onStartChange)
+    val pickRef = rememberUpdatedState(onPickStart)
+    Canvas(
+        Modifier
+            .fillMaxWidth()
+            .height(168.dp)
+            .pointerInput(axisEnd) {
+                detectTapGestures(onDoubleTap = { pickRef.value() })
+            }
+            .pointerInput(axisEnd) {
+                var origin = startRef.value
+                var span = 1.0
+                var carried = 0.0
+                detectHorizontalDragGestures(
+                    onDragStart = {
+                        origin = startRef.value
+                        span = (endRef.value.toEpochDay() - origin.toEpochDay()).coerceAtLeast(1L).toDouble()
+                        carried = 0.0
+                    },
+                    onHorizontalDrag = { change, amount ->
+                        change.consume()
+                        val width = size.width.toDouble().coerceAtLeast(1.0)
+                        carried += -amount / width * span
+                        val unclamped = origin.plusDays(carried.roundToLong())
+                        val next = unclamped.coerceIn(earliestRef.value, endRef.value)
+                        if (next != unclamped) {
+                            carried = (next.toEpochDay() - origin.toEpochDay()).toDouble()
+                        }
+                        changeRef.value(next)
+                    },
+                )
+            },
+    ) {
         if (days.isEmpty()) return@Canvas
         val padX = 8.dp.toPx()
         val padY = 14.dp.toPx()
@@ -1513,12 +1613,11 @@ private fun WeightChart(days: List<BodyWeightPoint>, weeks: List<BodyWeightPoint
         val padKg = ((maxKg - minKg) * 0.2).coerceAtLeast(0.5)
         val low = minKg - padKg
         val high = maxKg + padKg
-        val start = days.first().date.toEpochDay()
-        val span = (days.last().date.toEpochDay() - start).coerceAtLeast(1)
         fun xOf(date: LocalDate): Float {
-            if (days.size == 1) return size.width / 2f
-            val along = (date.toEpochDay() - start).toFloat() / span.toFloat()
-            return padX + (size.width - padX * 2) * along
+            if (axisStart == axisEnd) return size.width / 2f
+            val span = (axisEnd.toEpochDay() - axisStart.toEpochDay()).toFloat()
+            val along = (date.toEpochDay() - axisStart.toEpochDay()).toFloat() / span
+            return padX + (size.width - padX * 2) * along.coerceIn(0f, 1f)
         }
         fun yOf(kilograms: Double): Float {
             val plot = size.height - padY * 2
@@ -1532,6 +1631,52 @@ private fun WeightChart(days: List<BodyWeightPoint>, weeks: List<BodyWeightPoint
         days.forEach { day ->
             drawCircle(exact, radius = 4.5.dp.toPx(), center = Offset(xOf(day.date), yOf(day.kilograms)))
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun WeightStartDialog(
+    earliest: LocalDate,
+    latest: LocalDate,
+    selected: LocalDate,
+    onPick: (LocalDate) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initial = selected.coerceIn(earliest, latest)
+        .atStartOfDay(ZoneOffset.UTC)
+        .toInstant()
+        .toEpochMilli()
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = initial,
+        yearRange = earliest.year..latest.year,
+        selectableDates = object : SelectableDates {
+            override fun isSelectableDate(utcTimeMillis: Long): Boolean {
+                val day = Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate()
+                return !day.isBefore(earliest) && !day.isAfter(latest)
+            }
+        },
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    val millis = state.selectedDateMillis ?: return@TextButton
+                    val day = Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+                    onPick(day.coerceIn(earliest, latest))
+                },
+            ) {
+                Text(stringResource(R.string.weight_graph_set))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.weight_graph_cancel))
+            }
+        },
+    ) {
+        DatePicker(state = state)
     }
 }
 

@@ -21,6 +21,10 @@
     <string name="weight_graph_week">Week average %1$s kg</string>
     <string name="weight_graph_day_label">Each day</string>
     <string name="weight_graph_week_label">Week average</string>
+    <string name="weight_graph_range">Drag the graph to move the start. Double-tap it to pick a date.</string>
+    <string name="weight_graph_all">All dates</string>
+    <string name="weight_graph_set">Show from this date</string>
+    <string name="weight_graph_cancel">Cancel</string>
     <string name="weight_graph_caption">From Fit, through Health Connect. Dots are each day\'s weight. The line is that week\'s average. The latest day is the weight used for new workouts.</string>
     <string name="weight_graph_outside">From Fit, through Health Connect. Dots are each day\'s weight. The line is that week\'s average. This reading is outside 35 to 250 kg, so your profile weight stays as it is.</string>
     <string name="weight_graph_sync">Sync weight from Fit</string>

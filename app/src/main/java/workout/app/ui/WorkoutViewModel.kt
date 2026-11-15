@@ -111,6 +111,8 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var bodyWeight by mutableStateOf<List<BodyWeightPoint>>(emptyList())
         private set
+    var weightStartEpoch by mutableLongStateOf(playPrefs.getLong(WEIGHT_START, Long.MIN_VALUE))
+        private set
     var fitStatus by mutableStateOf<FitWeightStatus?>(null)
         private set
     var history by mutableStateOf<List<HistoryEntry>>(emptyList())
@@ -245,6 +247,11 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openHealthConnectUpdate() {
         FitWeights(getApplication()).openProviderUpdate()
+    }
+
+    fun setWeightGraphStart(date: LocalDate) {
+        weightStartEpoch = date.toEpochDay()
+        playPrefs.edit().putLong(WEIGHT_START, weightStartEpoch).apply()
     }
 
     fun onWorkoutRequest(value: String) {
@@ -918,6 +925,7 @@ class WorkoutViewModel(app: Application) : AndroidViewModel(app) {
 private const val PLAY_MODE = "mode"
 private const val ORDER_CHOSEN = "order_chosen"
 private const val GUIDANCE_ACCEPTED = "guidance_accepted"
+private const val WEIGHT_START = "weight_start"
 
 internal fun trimKg(value: Double): String =
     if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
